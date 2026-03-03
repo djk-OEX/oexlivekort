@@ -1,10 +1,6 @@
 {
   "routes": [
     {
-      "route": "/*",
-      "allowedRoles": ["authenticated"]
-    },
-    {
       "route": "/login",
       "redirect": "/.auth/login/aad",
       "statusCode": 302
@@ -13,6 +9,10 @@
       "route": "/logout",
       "redirect": "/.auth/logout",
       "statusCode": 302
+    },
+    {
+      "route": "/*",
+      "allowedRoles": ["authenticated"]
     }
   ],
   "responseOverrides": {
