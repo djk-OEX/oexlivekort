@@ -6,7 +6,62 @@
   <title>OEX Kort – Topbar (AutoTrack + Kompas + Pitch + Status)</title>
   <!-- Azure Maps Web SDK v3 -->
   <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css"/>
-  <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
+  <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js">
+// ===== Del / Share URL =====
+function oexBuildShareUrl(){
+  try{
+    const cam = map && map.getCamera ? map.getCamera() : {};
+    const center = cam && cam.center ? cam.center : [10.2039,56.1629];
+    const zoom = (cam && typeof cam.zoom==='number' && Number.isFinite(cam.zoom)) ? cam.zoom : 12;
+    const bearing = (cam && typeof cam.bearing==='number' && Number.isFinite(cam.bearing)) ? cam.bearing : 0;
+    const pitch = (cam && typeof cam.pitch==='number' && Number.isFinite(cam.pitch)) ? cam.pitch : 0;
+
+    const params = new URLSearchParams();
+    const a1 = (document.getElementById('addr1')?.value||'').trim();
+    const a2 = (document.getElementById('addr2')?.value||'').trim();
+    if(a1) params.set('addr1', a1);
+    if(a2) params.set('addr2', a2);
+
+    const lat1 = (document.getElementById('lat1')?.value||'').trim();
+    const lng1 = (document.getElementById('lng1')?.value||'').trim();
+    const lat2 = (document.getElementById('lat2')?.value||'').trim();
+    const lng2 = (document.getElementById('lng2')?.value||'').trim();
+    if(lat1 && lng1){ params.set('pos1', `${lat1},${lng1}`); }
+    if(lat2 && lng2){ params.set('pos2', `${lat2},${lng2}`); }
+
+    if(Array.isArray(center) && center.length===2){
+      params.set('center', `${center[1].toFixed(6)},${center[0].toFixed(6)}`);
+    }
+    params.set('zoom', Number(zoom||0).toFixed(2));
+    params.set('bearing', Number(bearing||0).toFixed(1));
+    params.set('pitch', Number(pitch||0).toFixed(1));
+
+    const live = document.getElementById('oex-gps-status')?.textContent?.includes('LIVE') ? '1' : '0';
+    params.set('live', live);
+
+    const url = `${location.origin}${location.pathname}?${params.toString()}`;
+    return url;
+  }catch(e){ console.warn('oexBuildShareUrl fejl', e); return location.href; }
+}
+
+function oexShareCurrentView(){
+  const url = oexBuildShareUrl();
+  // 1) Web Share API
+  if(navigator.share){
+    try{ navigator.share({ title: document.title || 'OEX Kort', url }); }catch(_){/* ignore */}
+  }
+  // 2) Vis en prompt med URL (altid)
+  try{ window.prompt('Kopiér link til visningen:', url); }catch(_){ }
+  // 3) Clipboard som bedste-effort
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(()=>{
+      setStatusChip('LINK KOPIERET', false);
+      setTimeout(()=>{ const live = (oexWatchId!==null); setStatusChip(live? 'LIVE • GPS':'PAUSE', live); }, 1200);
+    }).catch(()=>{});
+  }
+}
+
+</script>
   <!-- OEX BRANDING -->
   <meta name="color-scheme" content="dark"/>
   <style>
@@ -181,7 +236,9 @@
         });
       }
 
-      window.addEventListener('resize', safeResize);
+      const shareBtn = document.getElementById('shareBtn');
+    if(shareBtn){ shareBtn.addEventListener('click', oexShareCurrentView); }
+    window.addEventListener('resize', safeResize);
       document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ setTimeout(safeResize, 50);} });
       window.addEventListener('orientationchange', ()=> setTimeout(safeResize, 250));
     });
@@ -357,45 +414,4 @@
     const lat = Number(pos.coords.latitude), lng = Number(pos.coords.longitude);
     if (!isValidLatLon(lat,lng)){ await oexIpFallbackCenter(); return; }
     const latEl = document.getElementById('lat1'); const lngEl = document.getElementById('lng1'); const nameEl = document.getElementById('name1');
-    if (latEl) latEl.value = lat.toFixed(6); if (lngEl) lngEl.value = lng.toFixed(6); if (nameEl && !nameEl.value.trim()) nameEl.value = 'MIN POSITION';
-    const addrEl = document.getElementById('addr1'); if (addrEl && !addrEl.value.trim()) addrEl.value = 'MIN POSITION';
-    const hdg = (pos.coords && typeof pos.coords.heading === 'number' && Number.isFinite(pos.coords.heading)) ? pos.coords.heading : null; if (hdg !== null) { try{ map.setCamera({ bearing: hdg }); }catch(e){} }
-    setStatusChip('LIVE • GPS', true);
-    updateMapFromForm(false);
-  }
-
-  function updateGpsStatus(on){ setStatusChip(on? 'LIVE • GPS':'PAUSE', !!on); }
-
-  let oexWatchId = null; let oexAutoCenter = true;
-  function oexStartAutoTrack(options={highAccuracy:true}){
-    if (!('geolocation' in navigator)) { alert('Geolocation ikke understøttet i denne browser. Viser grov IP-lokation.'); oexIpFallbackCenter(); return; }
-    if (oexWatchId!==null) return; updateGpsStatus(true);
-    try{
-      oexWatchId = navigator.geolocation.watchPosition(
-        (pos)=>{
-          if(!pos||!pos.coords) return; const lat=Number(pos.coords.latitude), lng=Number(pos.coords.longitude); if(!isValidLatLon(lat,lng)) return;
-          const latEl=document.getElementById('lat1'); const lngEl=document.getElementById('lng1'); const nameEl=document.getElementById('name1');
-          if (latEl) latEl.value=lat.toFixed(6); if (lngEl) lngEl.value=lng.toFixed(6); if (nameEl && !nameEl.value.trim()) nameEl.value='MIN POSITION';
-          updateMapFromForm(true, /*suppressRoute*/ true);
-          if (oexAutoCenter){ try{ const cam=map.getCamera(); map.setCamera({ center:[lng,lat], zoom: cam.zoom||15.5, duration:300 }); }catch(e){} }
-          try{ if(typeof pos.coords.heading==='number' && Number.isFinite(pos.coords.heading)){ map.setCamera({ bearing: pos.coords.heading }); } }catch(e){}
-        },
-        async (err)=>{
-          console.warn('watchPosition fejl:', err);
-          // Fejlkoder: 1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT
-          const msg = err && err.code===1 ? 'TILLADELSE NÆGTET' : (err && err.code===2 ? 'POSITION UTILGÆNGELIG' : 'TIMEOUT');
-          setStatusChip(msg, false);
-          await oexIpFallbackCenter();
-          updateGpsStatus(false);
-        },
-        { enableHighAccuracy: !!options.highAccuracy, maximumAge: 5000, timeout: 10000 }
-      );
-    }catch(e){ console.error('Kunne ikke starte auto-tracking:', e); }
-  }
-
-  function oexStopAutoTrack(){ if (oexWatchId!==null){ try{ navigator.geolocation.clearWatch(oexWatchId); }catch(_){} oexWatchId=null; } updateGpsStatus(false); }
-
-  window.addEventListener("DOMContentLoaded", initMap);
-  </script>
-</body>
-</html>
+    if (latEl) latEl.value = lat.toFixed(6); if (lngEl) lngEl.value = lng.toFixed(6); if (nameEl && !nameEl.value.trim()
