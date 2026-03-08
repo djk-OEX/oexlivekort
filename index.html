@@ -4,64 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OEX Kort – Topbar (AutoTrack + Kompas + Pitch + Status)</title>
+  
   <!-- Azure Maps Web SDK v3 -->
   <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css"/>
-  <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js">
-// ===== Del / Share URL =====
-function oexBuildShareUrl(){
-  try{
-    const cam = map && map.getCamera ? map.getCamera() : {};
-    const center = cam && cam.center ? cam.center : [10.2039,56.1629];
-    const zoom = (cam && typeof cam.zoom==='number' && Number.isFinite(cam.zoom)) ? cam.zoom : 12;
-    const bearing = (cam && typeof cam.bearing==='number' && Number.isFinite(cam.bearing)) ? cam.bearing : 0;
-    const pitch = (cam && typeof cam.pitch==='number' && Number.isFinite(cam.pitch)) ? cam.pitch : 0;
+  <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
 
-    const params = new URLSearchParams();
-    const a1 = (document.getElementById('addr1')?.value||'').trim();
-    const a2 = (document.getElementById('addr2')?.value||'').trim();
-    if(a1) params.set('addr1', a1);
-    if(a2) params.set('addr2', a2);
-
-    const lat1 = (document.getElementById('lat1')?.value||'').trim();
-    const lng1 = (document.getElementById('lng1')?.value||'').trim();
-    const lat2 = (document.getElementById('lat2')?.value||'').trim();
-    const lng2 = (document.getElementById('lng2')?.value||'').trim();
-    if(lat1 && lng1){ params.set('pos1', `${lat1},${lng1}`); }
-    if(lat2 && lng2){ params.set('pos2', `${lat2},${lng2}`); }
-
-    if(Array.isArray(center) && center.length===2){
-      params.set('center', `${center[1].toFixed(6)},${center[0].toFixed(6)}`);
-    }
-    params.set('zoom', Number(zoom||0).toFixed(2));
-    params.set('bearing', Number(bearing||0).toFixed(1));
-    params.set('pitch', Number(pitch||0).toFixed(1));
-
-    const live = document.getElementById('oex-gps-status')?.textContent?.includes('LIVE') ? '1' : '0';
-    params.set('live', live);
-
-    const url = `${location.origin}${location.pathname}?${params.toString()}`;
-    return url;
-  }catch(e){ console.warn('oexBuildShareUrl fejl', e); return location.href; }
-}
-
-function oexShareCurrentView(){
-  const url = oexBuildShareUrl();
-  // 1) Web Share API
-  if(navigator.share){
-    try{ navigator.share({ title: document.title || 'OEX Kort', url }); }catch(_){/* ignore */}
-  }
-  // 2) Vis en prompt med URL (altid)
-  try{ window.prompt('Kopiér link til visningen:', url); }catch(_){ }
-  // 3) Clipboard som bedste-effort
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(url).then(()=>{
-      setStatusChip('LINK KOPIERET', false);
-      setTimeout(()=>{ const live = (oexWatchId!==null); setStatusChip(live? 'LIVE • GPS':'PAUSE', live); }, 1200);
-    }).catch(()=>{});
-  }
-}
-
-</script>
   <!-- OEX BRANDING -->
   <meta name="color-scheme" content="dark"/>
   <style>
@@ -89,14 +36,14 @@ function oexShareCurrentView(){
     .oex-btn{ width:40px; height:40px; border-radius:10px; border:1px solid var(--oex-fig); background:var(--oex-accent); color:#000; font-weight:700; font-size:20px; line-height:1; cursor:pointer; user-select:none; box-shadow:0 2px 8px rgba(0,0,0,.35);} 
     .oex-btn:active{ transform:scale(0.98);} 
     .oex-btn:focus{ outline:2px solid var(--oex-accent); outline-offset:2px;} 
-    .azure-map-control a{ color:var(--oex-accent) !important; }
-    #map{ flex:1 1 auto; min-height:0; height:100%; }
-    .map-wrap{ position:relative; flex:1 1 auto; min-height:0; }
-    @media (max-width: 820px){ .form-grid{ grid-template-columns: 1fr; } }
-    .oex-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:9999px; border:1px solid var(--oex-fig); background:#0b0b0b; color:#fff; font-weight:700; font-size:12px; }
-    .oex-chip .dot{ width:8px; height:8px; border-radius:50%; background:var(--oex-fig); display:inline-block; }
-    .oex-chip-on{ border-color: var(--oex-accent); }
-    .oex-chip-on .dot{ background: var(--oex-accent); }
+    .azure-map-control a{ color:var(--oex-accent) !important; } 
+    #map{ flex:1 1 auto; min-height:0; height:100%; } 
+    .map-wrap{ position:relative; flex:1 1 auto; min-height:0; } 
+    @media (max-width: 820px){ .form-grid{ grid-template-columns: 1fr; } } 
+    .oex-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:9999px; border:1px solid var(--oex-fig); background:#0b0b0b; color:#fff; font-weight:700; font-size:12px; } 
+    .oex-chip .dot{ width:8px; height:8px; border-radius:50%; background:var(--oex-fig); display:inline-block; } 
+    .oex-chip-on{ border-color: var(--oex-accent); } 
+    .oex-chip-on .dot{ background: var(--oex-accent); } 
   </style>
 </head>
 <body>
@@ -132,6 +79,7 @@ function oexShareCurrentView(){
           <input id="lng2" type="number" step="any" placeholder="(valgfri)" style="display:none" />
           <div class="hint" id="hint2"></div>
         </div>
+
         <div class="toolbar">
           <div class="oex-zoom-wrap" aria-label="Zoom-kontrol">
             <button id="oex-zoom-in" class="oex-btn" aria-label="Zoom ind" title="Zoom ind (+)">+</button>
@@ -149,37 +97,131 @@ function oexShareCurrentView(){
       </div>
     </div>
   </header>
+
   <div class="map-wrap">
     <div id="map" role="region" aria-label="Kort med to markører (A og B) og rute"></div>
   </div>
+
   <script>
   // ===== Konfiguration =====
-  const AZURE_MAPS_KEY = "D9dGgfb9BY3umCaFfsewjziUirXEz50b9Lhqszcrrq5jc0KiMYSuJQQJ99CBACi5YpzFQJVFAAAgAZMP1WG9";
+  const AZURE_MAPS_KEY = "D9dGgfb9BY3umCaFfsewjziUirXEz50b9Lhqszcrrq5jc0KiMYSuJQQJ99CBACi5YpzFQJVFAAAgAZMP1WG9"; // PAS PÅ: Hold nøgler hemmelige i produktion
   const OEX_BLUE = "#00B0F8";
 
   // ===== Utils (validering/guards) =====
   function isFiniteNumber(n){ return typeof n === 'number' && Number.isFinite(n); }
-  function isValidLatLon(lat,lng){
-    return isFiniteNumber(lat) && isFiniteNumber(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
-  }
-  function safeSetCenter(lat,lng,zoom=11.5,duration=500){
-    try{ if(isValidLatLon(lat,lng)) map.setCamera({ center:[lng,lat], zoom, duration }); }catch(e){}
-  }
-  function setStatusChip(text, live){
-    const el = document.getElementById('oex-gps-status'); if(!el) return;
-    el.classList.toggle('oex-chip-on', !!live);
-    el.classList.toggle('oex-chip-off', !live);
-    el.innerHTML = '<span class="dot" aria-hidden="true"></span>' + text;
-  }
+  function isValidLatLon(lat,lng){ return isFiniteNumber(lat) && isFiniteNumber(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180; }
+  function safeSetCenter(lat,lng,zoom=11.5,duration=500){ try{ if(isValidLatLon(lat,lng)) map.setCamera({ center:[lng,lat], zoom, duration }); }catch(e){} }
+  function setStatusChip(text, live){ const el = document.getElementById('oex-gps-status'); if(!el) return; el.classList.toggle('oex-chip-on', !!live); el.classList.toggle('oex-chip-off', !live); el.innerHTML = '<span class="dot" aria-hidden="true"></span>' + text; }
 
   // ===== Azure Maps setup =====
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer;
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
-
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
   function safeResize(){ try{ if(map) map.resize(); }catch(e){} }
 
+  // ===== URL <-> STATE =====
+  const OEX_DEFAULT_VIEW = { lat: 56.1629, lng: 10.2039, z: 12, b: 0, p: 0 };
+
+  function oexGetUrlState() {
+    const u = new URL(window.location.href);
+    const o = {
+      center: u.searchParams.get('center'),
+      zoom: parseFloat(u.searchParams.get('zoom')),
+      bearing: parseFloat(u.searchParams.get('bearing')),
+      pitch: parseFloat(u.searchParams.get('pitch')),
+      pos1: u.searchParams.get('pos1'),
+      pos2: u.searchParams.get('pos2'),
+      addr1: u.searchParams.get('addr1'),
+      addr2: u.searchParams.get('addr2'),
+      live: u.searchParams.get('live')
+    };
+
+    const out = {
+      lat: OEX_DEFAULT_VIEW.lat,
+      lng: OEX_DEFAULT_VIEW.lng,
+      z: isFinite(o.zoom) ? o.zoom : OEX_DEFAULT_VIEW.z,
+      b: isFinite(o.bearing) ? o.bearing : OEX_DEFAULT_VIEW.b,
+      p: isFinite(o.pitch) ? o.pitch : OEX_DEFAULT_VIEW.p,
+      pos1: null,
+      pos2: null,
+      addr1: o.addr1 || '',
+      addr2: o.addr2 || '',
+      live: o.live === '1'
+    };
+
+    if (o.center && o.center.includes(',')) {
+      const [latStr, lngStr] = o.center.split(',');
+      const lat = parseFloat(latStr), lng = parseFloat(lngStr);
+      if (isValidLatLon(lat, lng)) { out.lat = lat; out.lng = lng; }
+    }
+
+    function parsePos(v) {
+      if (!v || !v.includes(',')) return null;
+      const [la, ln] = v.split(',');
+      const lat = parseFloat(la), lng = parseFloat(ln);
+      return isValidLatLon(lat, lng) ? { lat, lng } : null;
+    }
+    out.pos1 = parsePos(o.pos1);
+    out.pos2 = parsePos(o.pos2);
+
+    return out;
+  }
+
+  async function oexApplyUrlStateOnLoad(){
+    const s = oexGetUrlState();
+    let applied = false;
+
+    if (s.addr1) { document.getElementById('addr1').value = s.addr1; applied = true; }
+    if (s.addr2) { document.getElementById('addr2').value = s.addr2; applied = true; }
+    if (s.pos1) {
+      document.getElementById('lat1').value = s.pos1.lat.toFixed(6);
+      document.getElementById('lng1').value = s.pos1.lng.toFixed(6);
+      if (!document.getElementById('name1').value.trim()) document.getElementById('name1').value = 'PUNKT A';
+      applied = true;
+    }
+    if (s.pos2) {
+      document.getElementById('lat2').value = s.pos2.lat.toFixed(6);
+      document.getElementById('lng2').value = s.pos2.lng.toFixed(6);
+      if (!document.getElementById('name2').value.trim()) document.getElementById('name2').value = 'PUNKT B';
+      applied = true;
+    }
+
+    await updateMapFromForm(true);
+
+    if (map) {
+      map.setCamera({ center:[s.lng, s.lat], zoom:s.z, bearing:s.b, pitch:s.p, duration:0 });
+      applied = applied || true; // mindst kamera
+    }
+
+    setStatusChip(s.live ? 'LIVE • GPS' : 'PAUSE', s.live);
+    return applied;
+  }
+
+  let oexUrlWriteTimer = null;
+  function oexSyncUrlFromCamera(){
+    try {
+      const cam = map.getCamera();
+      const u = new URL(window.location.href);
+      u.searchParams.set('center', `${cam.center[1].toFixed(6)},${cam.center[0].toFixed(6)}`);
+      u.searchParams.set('zoom',   cam.zoom.toFixed(2));
+      u.searchParams.set('bearing', (cam.bearing || 0).toFixed(1));
+      u.searchParams.set('pitch', (cam.pitch || 0).toFixed(1));
+      clearTimeout(oexUrlWriteTimer);
+      oexUrlWriteTimer = setTimeout(() => { history.replaceState(null, '', u.toString()); }, 120);
+    } catch(_) {}
+  }
+
+  window.addEventListener('popstate', () => {
+    const s = oexGetUrlState();
+    if (!map) return;
+    map.setCamera({ center:[s.lng, s.lat], zoom:s.z, bearing:s.b, pitch:s.p, duration:0 });
+    if (s.pos1) { document.getElementById('lat1').value = s.pos1.lat.toFixed(6); document.getElementById('lng1').value = s.pos1.lng.toFixed(6); }
+    if (s.pos2) { document.getElementById('lat2').value = s.pos2.lat.toFixed(6); document.getElementById('lng2').value = s.pos2.lng.toFixed(6); }
+    updateMapFromForm(true);
+  });
+
+  // ===== Init kort =====
   function initMap(){
     map = new atlas.Map("map", {
       authOptions: { authType: "subscriptionKey", subscriptionKey: AZURE_MAPS_KEY },
@@ -189,7 +231,7 @@ function oexShareCurrentView(){
       autoResize: true
     });
 
-    map.events.add("ready", () => {
+    map.events.add("ready", async () => {
       datasource = new atlas.source.DataSource(); map.sources.add(datasource);
       bubbleLayer = new atlas.layer.BubbleLayer(datasource, null, { radius: 8, color: OEX_BLUE, strokeColor: OEX_BLUE, strokeWidth: 2, opacity: 0.35 });
       symbolLayer = new atlas.layer.SymbolLayer(datasource, null, {
@@ -223,10 +265,15 @@ function oexShareCurrentView(){
       });
 
       ['lat1','lng1','lat2','lng2'].forEach(id=>{ const el=document.getElementById(id); if(el && (el.value==='0' || el.value==='0.0')) el.value=''; });
-      updateMapFromForm(true);
-      zoomToJylland(0);
 
-      try{ const cam = map.getCamera(); if (!cam.bearing || Math.abs(cam.bearing) < 0.01){ map.setCamera({ bearing: 0.1 }); } }catch(e){}
+      // --- URL state først ---
+      const applied = await oexApplyUrlStateOnLoad();
+      if (!applied){
+        // Standard initialisering hvis ingen URL-state
+        await updateMapFromForm(true);
+        zoomToJylland(0);
+        try{ const cam = map.getCamera(); if (!cam.bearing || Math.abs(cam.bearing) < 0.01){ map.setCamera({ bearing: 0.1 }); } }catch(e){}
+      }
 
       const atBtn = document.getElementById('autotrackBtn');
       if(atBtn){
@@ -237,17 +284,23 @@ function oexShareCurrentView(){
       }
 
       const shareBtn = document.getElementById('shareBtn');
-    if(shareBtn){ shareBtn.addEventListener('click', oexShareCurrentView); }
-    window.addEventListener('resize', safeResize);
+      if(shareBtn){ shareBtn.addEventListener('click', oexShareCurrentView); }
+
+      window.addEventListener('resize', safeResize);
       document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ setTimeout(safeResize, 50);} });
       window.addEventListener('orientationchange', ()=> setTimeout(safeResize, 250));
+
+      // Sync kamera -> URL
+      const _oexSync = () => oexSyncUrlFromCamera();
+      map.events.add('moveend', _oexSync);
+      map.events.add('pitchchanged', _oexSync);
+      map.events.add('rotateend', _oexSync);
     });
   }
 
   // ===== Adresse-søgning =====
   function onAddressInput(idx){ clearTimeout(timers[idx]); const q = (document.getElementById("addr"+idx).value || "").trim(); if (!q) { showSuggestions(idx, []); return; } timers[idx] = setTimeout(()=> fetchSuggestions(idx, q), 450); }
   function triggerSearch(idx){ const q = (document.getElementById("addr"+idx).value || "").trim(); if (q) fetchSuggestions(idx, q, true); }
-
   async function fetchSuggestions(idx, query, chooseFirstIfAny=false){
     try{
       setHint(idx, "Søger…");
@@ -266,16 +319,12 @@ function oexShareCurrentView(){
       showSuggestions(idx, suggestions);
     }catch(err){ console.error("Azure Maps search fejl:", err); setHint(idx, "Fejl ved søgning (tjek key/CORS)."); showSuggestions(idx, []); }
   }
-
   function showSuggestions(idx, list){ const box = document.getElementById("sug"+idx); box.innerHTML = ""; if (!list || !list.length) { box.style.display = "none"; return; } list.forEach(item => { const div = document.createElement("div"); div.className = "suggestion"; div.textContent = item.title; div.addEventListener("click", () => { document.getElementById("addr"+idx).value = item.title; selectSuggestion(idx, { position:{ lat:item.lat, lon:item.lon }, address:{ freeformAddress:item.title } }); box.style.display = "none"; }); box.appendChild(div); }); box.style.display = "block"; }
-
   function selectSuggestion(idx, result){ const lat = result.position.lat, lng = result.position.lon; if (!isValidLatLon(lat,lng)) return; document.getElementById("lat"+idx).value = lat.toFixed(6); document.getElementById("lng"+idx).value = lng.toFixed(6); const free = (result.address && result.address.freeformAddress) ? result.address.freeformAddress : (document.getElementById("addr"+idx).value || "").trim(); localStorage.setItem("oex_addr"+idx, free); const nameEl = document.getElementById("name"+idx); if (!nameEl.value.trim()) { nameEl.value = (idx===1?"":""); } updateMapFromForm(false); }
-
   function setHint(idx, text){ const h = document.getElementById("hint"+idx); if (h) h.textContent = text || ""; }
-
   function readNum(id){ const el = document.getElementById(id); if (!el) return NaN; const v = (el.value || '').trim(); if (v === '' || v === '0' || v === '0.0') return NaN; const n = Number(v); if (!Number.isFinite(n) || n === 0) return NaN; return n; }
 
-  // ===== Tegn markører/rute (med guards) =====
+  // ===== Tegn markører/rute =====
   async function updateMapFromForm(keepZoom=false, suppressRoute=false){
     if (!datasource) return;
     datasource.clear();
@@ -328,10 +377,9 @@ function oexShareCurrentView(){
   }
 
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); localStorage.removeItem("oex_addr2"); const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; updateMapFromForm(false); }
-
   function setupPressAndHold(selector, delta){ const btn = document.querySelector(selector); if (!btn) return; let t = null; const step = () => { const cam = map.getCamera(); map.setCamera({ zoom: cam.zoom + delta, animate:true, duration:50 }); }; const start = () => { step(); if (!t) t = setInterval(step, 60); }; const stop = () => { if (t){ clearInterval(t); t = null; } }; btn.addEventListener('mousedown', start); document.addEventListener('mouseup', stop); btn.addEventListener('mouseleave', stop); btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); start(); }, {passive:false}); document.addEventListener('touchend', stop); document.addEventListener('touchcancel', stop); }
 
-  // ===== IP FALLBACK (robust guards + bbox) =====
+  // ===== IP FALLBACK =====
   let _oexTriedIpFallback = false;
   function parseBoundsFromResult(r){
     if (!r) return null;
@@ -347,7 +395,6 @@ function oexShareCurrentView(){
     }
     return null;
   }
-
   async function oexIpFallbackCenter(){
     if (_oexTriedIpFallback) return; // kun én gang pr. session
     try{
@@ -355,13 +402,11 @@ function oexShareCurrentView(){
       const ipRes = await fetch(ipUrl, {credentials:'omit'});
       if(!ipRes.ok){ console.warn('IP fallback HTTP', ipRes.status); throw new Error('HTTP '+ipRes.status); }
       const ipData = await ipRes.json();
-
       let lat=null, lng=null, bbox=null, cc=null;
       if (ipData && ipData.location && isFiniteNumber(ipData.location.lat) && isFiniteNumber(ipData.location.lon)){
         lat = ipData.location.lat; lng = ipData.location.lon;
       }
       if (ipData && ipData.countryCode){ cc = ipData.countryCode; }
-
       if ((lat===null || lng===null) && cc){
         const fUrl = 'https://atlas.microsoft.com/search/fuzzy/json?api-version=1.0&limit=1&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY) + '&query=' + encodeURIComponent(cc);
         const fRes = await fetch(fUrl, {credentials:'omit'});
@@ -374,12 +419,9 @@ function oexShareCurrentView(){
           }
         }
       }
-
-      // Opdater A-markør og kamera kun ved gyldige data
       const latEl = document.getElementById('lat1');
       const lngEl = document.getElementById('lng1');
       const nameEl = document.getElementById('name1');
-
       if (isValidLatLon(lat,lng)){
         if (latEl) latEl.value = lat.toFixed(6);
         if (lngEl) lngEl.value = lng.toFixed(6);
@@ -420,9 +462,7 @@ function oexShareCurrentView(){
     setStatusChip('LIVE • GPS', true);
     updateMapFromForm(false);
   }
-
   function updateGpsStatus(on){ setStatusChip(on? 'LIVE • GPS':'PAUSE', !!on); }
-
   let oexWatchId = null; let oexAutoCenter = true;
   function oexStartAutoTrack(options={highAccuracy:true}){
     if (!('geolocation' in navigator)) { alert('Geolocation ikke understøttet i denne browser. Viser grov IP-lokation.'); oexIpFallbackCenter(); return; }
@@ -439,7 +479,6 @@ function oexShareCurrentView(){
         },
         async (err)=>{
           console.warn('watchPosition fejl:', err);
-          // Fejlkoder: 1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT
           const msg = err && err.code===1 ? 'TILLADELSE NÆGTET' : (err && err.code===2 ? 'POSITION UTILGÆNGELIG' : 'TIMEOUT');
           setStatusChip(msg, false);
           await oexIpFallbackCenter();
@@ -449,65 +488,56 @@ function oexShareCurrentView(){
       );
     }catch(e){ console.error('Kunne ikke starte auto-tracking:', e); }
   }
-
   function oexStopAutoTrack(){ if (oexWatchId!==null){ try{ navigator.geolocation.clearWatch(oexWatchId); }catch(_){} oexWatchId=null; } updateGpsStatus(false); }
 
-  window.addEventListener("DOMContentLoaded", initMap);
-  
-// ===== Del / Share URL =====
-function oexBuildShareUrl(){
-  try{
-    const cam = map && map.getCamera ? map.getCamera() : {};
-    const center = cam && cam.center ? cam.center : [10.2039,56.1629];
-    const zoom = (cam && typeof cam.zoom==='number' && Number.isFinite(cam.zoom)) ? cam.zoom : 12;
-    const bearing = (cam && typeof cam.bearing==='number' && Number.isFinite(cam.bearing)) ? cam.bearing : 0;
-    const pitch = (cam && typeof cam.pitch==='number' && Number.isFinite(cam.pitch)) ? cam.pitch : 0;
+  // ===== DEL / SHARE =====
+  function oexBuildShareUrl(){
+    try{
+      const cam = map && map.getCamera ? map.getCamera() : {};
+      const center = cam && cam.center ? cam.center : [10.2039,56.1629];
+      const zoom = (cam && typeof cam.zoom==='number' && Number.isFinite(cam.zoom)) ? cam.zoom : 12;
+      const bearing = (cam && typeof cam.bearing==='number' && Number.isFinite(cam.bearing)) ? cam.bearing : 0;
+      const pitch = (cam && typeof cam.pitch==='number' && Number.isFinite(cam.pitch)) ? cam.pitch : 0;
+      const params = new URLSearchParams();
 
-    const params = new URLSearchParams();
-    const a1 = (document.getElementById('addr1')?.value||'').trim();
-    const a2 = (document.getElementById('addr2')?.value||'').trim();
-    if(a1) params.set('addr1', a1);
-    if(a2) params.set('addr2', a2);
+      const a1 = (document.getElementById('addr1')?.value||'').trim();
+      const a2 = (document.getElementById('addr2')?.value||'').trim();
+      if(a1) params.set('addr1', a1);
+      if(a2) params.set('addr2', a2);
 
-    const lat1 = (document.getElementById('lat1')?.value||'').trim();
-    const lng1 = (document.getElementById('lng1')?.value||'').trim();
-    const lat2 = (document.getElementById('lat2')?.value||'').trim();
-    const lng2 = (document.getElementById('lng2')?.value||'').trim();
-    if(lat1 && lng1){ params.set('pos1', `${lat1},${lng1}`); }
-    if(lat2 && lng2){ params.set('pos2', `${lat2},${lng2}`); }
+      const lat1 = (document.getElementById('lat1')?.value||'').trim();
+      const lng1 = (document.getElementById('lng1')?.value||'').trim();
+      const lat2 = (document.getElementById('lat2')?.value||'').trim();
+      const lng2 = (document.getElementById('lng2')?.value||'').trim();
+      if(lat1 && lng1){ params.set('pos1', `${lat1},${lng1}`); }
+      if(lat2 && lng2){ params.set('pos2', `${lat2},${lng2}`); }
 
-    if(Array.isArray(center) && center.length===2){
-      params.set('center', `${center[1].toFixed(6)},${center[0].toFixed(6)}`);
+      if(Array.isArray(center) && center.length===2){ params.set('center', `${center[1].toFixed(6)},${center[0].toFixed(6)}`); }
+      params.set('zoom', Number(zoom||0).toFixed(2));
+      params.set('bearing', Number(bearing||0).toFixed(1));
+      params.set('pitch', Number(pitch||0).toFixed(1));
+
+      const live = document.getElementById('oex-gps-status')?.textContent?.includes('LIVE') ? '1' : '0';
+      params.set('live', live);
+
+      const url = `${location.origin}${location.pathname}?${params.toString()}`;
+      return url;
+    }catch(e){ console.warn('oexBuildShareUrl fejl', e); return location.href; }
+  }
+  function oexShareCurrentView(){
+    const url = oexBuildShareUrl();
+    if(navigator.share){ try{ navigator.share({ title: document.title || 'OEX Kort', url }); }catch(_){/* ignore */} }
+    try{ window.prompt('Kopiér link til visningen:', url); }catch(_){ }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url).then(()=>{
+        setStatusChip('LINK KOPIERET', false);
+        setTimeout(()=>{ const live = (oexWatchId!==null); setStatusChip(live? 'LIVE • GPS':'PAUSE', live); }, 1200);
+      }).catch(()=>{});
     }
-    params.set('zoom', Number(zoom||0).toFixed(2));
-    params.set('bearing', Number(bearing||0).toFixed(1));
-    params.set('pitch', Number(pitch||0).toFixed(1));
-
-    const live = document.getElementById('oex-gps-status')?.textContent?.includes('LIVE') ? '1' : '0';
-    params.set('live', live);
-
-    const url = `${location.origin}${location.pathname}?${params.toString()}`;
-    return url;
-  }catch(e){ console.warn('oexBuildShareUrl fejl', e); return location.href; }
-}
-
-function oexShareCurrentView(){
-  const url = oexBuildShareUrl();
-  // 1) Web Share API
-  if(navigator.share){
-    try{ navigator.share({ title: document.title || 'OEX Kort', url }); }catch(_){/* ignore */}
   }
-  // 2) Vis en prompt med URL (altid)
-  try{ window.prompt('Kopiér link til visningen:', url); }catch(_){ }
-  // 3) Clipboard som bedste-effort
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(url).then(()=>{
-      setStatusChip('LINK KOPIERET', false);
-      setTimeout(()=>{ const live = (oexWatchId!==null); setStatusChip(live? 'LIVE • GPS':'PAUSE', live); }, 1200);
-    }).catch(()=>{});
-  }
-}
 
-</script>
+  // Boot
+  window.addEventListener("DOMContentLoaded", initMap);
+  </script>
 </body>
 </html>
