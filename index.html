@@ -92,6 +92,7 @@
             <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
             <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
             <button class="secondary" id="shareBtn" title="Del visning">Del</button>
+            <button class="secondary" id="viewToggleBtn" title="Skift visning (Dark / 3D / Virkelighed)">VISNING: DARK</button>
           </div>
         </div>
       </div>
@@ -123,6 +124,33 @@
   // ===== URL <-> STATE =====
   const OEX_DEFAULT_VIEW = { lat: 56.1629, lng: 10.2039, z: 12, b: 0, p: 0 };
 
+  // --- OEX VIEW MODE (dark | 3d | reality) ---
+  let _oexView = 'dark';
+  function oexApplyView(view){
+    _oexView = (view==='3d' || view==='reality') ? view : 'dark';
+    try{
+      if(_oexView==='reality'){
+        map.setStyle({ style: 'satellite_road_labels' });
+        const cam = map.getCamera();
+        map.setCamera({ pitch: 0, bearing: cam.bearing||0 });
+      } else if(_oexView==='3d'){
+        // Keep grayscale_dark, ensure a street-level zoom and pitch
+        map.setStyle({ style: 'grayscale_dark' });
+        const cam = map.getCamera();
+        const targetZoom = (cam.zoom && cam.zoom < 17) ? 17 : (cam.zoom||17);
+        map.setCamera({ zoom: targetZoom, pitch: 60, bearing: cam.bearing||0, duration: 250 });
+      } else {
+        // dark (2D)
+        map.setStyle({ style: 'grayscale_dark' });
+        const cam = map.getCamera();
+        map.setCamera({ pitch: 0, bearing: cam.bearing||0 });
+      }
+    }catch(e){ console.warn('oexApplyView error', e); }
+    // Update button label if available
+    const btn = document.getElementById('viewToggleBtn');
+    if(btn){ btn.textContent = 'VISNING: ' + (_oexView==='reality'?'VIRKELIGHED':(_oexView==='3d'?'3D':'DARK')); }
+  }
+
   function oexGetUrlState() {
     const u = new URL(window.location.href);
     const o = {
@@ -134,7 +162,8 @@
       pos2: u.searchParams.get('pos2'),
       addr1: u.searchParams.get('addr1'),
       addr2: u.searchParams.get('addr2'),
-      live: u.searchParams.get('live')
+      live: u.searchParams.get('live'),
+      view: u.searchParams.get('view')
     };
 
     const out = {
@@ -147,7 +176,8 @@
       pos2: null,
       addr1: o.addr1 || '',
       addr2: o.addr2 || '',
-      live: o.live === '1'
+      live: o.live === '1',
+      view: (o.view==='3d' || o.view==='reality') ? o.view : 'dark'
     };
 
     if (o.center && o.center.includes(',')) {
@@ -195,6 +225,7 @@
     }
 
     setStatusChip(s.live ? 'LIVE • GPS' : 'PAUSE', s.live);
+    try{ oexApplyView(s.view); }catch(_){ }
     return applied;
   }
 
@@ -207,6 +238,7 @@
       u.searchParams.set('zoom',   cam.zoom.toFixed(2));
       u.searchParams.set('bearing', (cam.bearing || 0).toFixed(1));
       u.searchParams.set('pitch', (cam.pitch || 0).toFixed(1));
+      u.searchParams.set('view', _oexView);
       clearTimeout(oexUrlWriteTimer);
       oexUrlWriteTimer = setTimeout(() => { history.replaceState(null, '', u.toString()); }, 120);
     } catch(_) {}
@@ -218,6 +250,7 @@
     map.setCamera({ center:[s.lng, s.lat], zoom:s.z, bearing:s.b, pitch:s.p, duration:0 });
     if (s.pos1) { document.getElementById('lat1').value = s.pos1.lat.toFixed(6); document.getElementById('lng1').value = s.pos1.lng.toFixed(6); }
     if (s.pos2) { document.getElementById('lat2').value = s.pos2.lat.toFixed(6); document.getElementById('lng2').value = s.pos2.lng.toFixed(6); }
+    try{ oexApplyView(s.view); }catch(_){ }
     updateMapFromForm(true);
   });
 
@@ -273,6 +306,20 @@
         await updateMapFromForm(true);
         zoomToJylland(0);
         try{ const cam = map.getCamera(); if (!cam.bearing || Math.abs(cam.bearing) < 0.01){ map.setCamera({ bearing: 0.1 }); } }catch(e){}
+      }
+
+      // VIEW toggle button init + handler
+      const _stateForView = oexGetUrlState();
+      try{ oexApplyView(_stateForView.view); }catch(_){ }
+      const viewBtn = document.getElementById('viewToggleBtn');
+      if(viewBtn){
+        viewBtn.addEventListener('click', () => {
+          const order = ['dark','3d','reality'];
+          const i = order.indexOf(_oexView);
+          const next = order[(i+1)%order.length];
+          oexApplyView(next);
+          oexSyncUrlFromCamera();
+        });
       }
 
       const atBtn = document.getElementById('autotrackBtn');
@@ -519,6 +566,7 @@
 
       const live = document.getElementById('oex-gps-status')?.textContent?.includes('LIVE') ? '1' : '0';
       params.set('live', live);
+      params.set('view', _oexView);
 
       const url = `${location.origin}${location.pathname}?${params.toString()}`;
       return url;
