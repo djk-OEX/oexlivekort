@@ -242,7 +242,8 @@
     });
     map.events.add("ready", async () => {
       datasource = new atlas.source.DataSource(); map.sources.add(datasource);
-      bubbleLayer = new atlas.layer.BubbleLayer(datasource, null, { radius: 8, color: OEX_BLUE, strokeColor: OEX_BLUE, strokeWidth: 2, opacity: 0.35 });
+      // *** OEX ændring: fyldte blå cirkler uden omrids ***
+      bubbleLayer = new atlas.layer.BubbleLayer(datasource, null, { radius: 8, color: OEX_BLUE, opacity: 1, strokeWidth: 0 });
       symbolLayer = new atlas.layer.SymbolLayer(datasource, null, {
         textOptions: { textField: ["coalesce", ["get","label"], ["get","title"]], color: "#FFFFFF", offset: [0,-2], size: 13 },
         iconOptions: { image: "none" }
