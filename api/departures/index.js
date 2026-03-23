@@ -1,45 +1,41 @@
 // api/departures/index.js
-// Simpelt departures-endpoint til Azure Functions (HTTP GET /api/departures?stopId=xxx)
-// Læser en lokal GTFS ZIP (api/gtfs.zip), parser relevante tabeller og returnerer næste afgange.
-// POC: Planlagte tider (GTFS). Realtid (SIRI) kan kobles på senere.
+// Henter GTFS.zip fra Azure Blob Storage og returnerer næste afgange for ?stopId=xxx
 
-// Dependencies defineret i api/package.json: unzipper, csv-parse
-import path from "path";
-import { promises as fs } from "fs";
 import unzipper from "unzipper";
 import { parse } from "csv-parse/sync";
 
-/** Cache i memory for hurtig svartid i Function runtime */
-let GTFS = null;
-let GTFS_LOADED_AT = null;
+// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+// Sæt din offentlige Blob-URL herunder (kan også flyttes til env var GTFS_URL):
+const GTFS_URL = "https://oexazfilkonto.blob.core.windows.net/gtfs/GTFS.zip";
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
-/** Hjælp: parse HH:MM:SS til minutter siden midnat */
+let GTFS = null;
+
+// Hjælpere
 function hhmmssToMinutes(hhmmss) {
   if (!hhmmss) return null;
-  const parts = hhmmss.split(":").map(n => parseInt(n, 10));
-  const h = parts[0] || 0, m = parts[1] || 0, s = parts[2] || 0;
-  return h * 60 + m + Math.floor(s / 60);
+  const [h, m, s] = hhmmss.split(":").map((n) => parseInt(n, 10));
+  return (h || 0) * 60 + (m || 0) + Math.floor((s || 0) / 60);
 }
-
-/** Hjælp: “nu” i minutter siden midnat (lokal server-tid) */
 function nowMinutes() {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes();
 }
 
-/** Load/parse GTFS.zip én gang (eller ved cold start) */
 async function loadGTFS() {
   if (GTFS) return GTFS;
 
-  const zipPath = path.join(process.cwd(), "api", "gtfs.zip");
-  // Tjek at filen findes
-  await fs.access(zipPath);
+  // Hent ZIP til memory
+  const resp = await fetch(GTFS_URL, { cache: "no-store" });
+  if (!resp.ok) throw new Error(`Failed to fetch GTFS.zip: ${resp.status} ${resp.statusText}`);
+  const arrayBuf = await resp.arrayBuffer();
+  const buffer = Buffer.from(arrayBuf);
 
-  const directory = await unzipper.Open.file(zipPath);
+  // Åbn ZIP fra buffer
+  const directory = await unzipper.Open.buffer(buffer);
 
-  // Læs .txt filer ind i memory
-  const tables = {};
-  const needed = new Set([
+  // Læs relevante .txt filer
+  const need = new Set([
     "stops.txt",
     "routes.txt",
     "trips.txt",
@@ -47,15 +43,19 @@ async function loadGTFS() {
     "calendar.txt",
     "calendar_dates.txt"
   ]);
+  const tables = {};
 
-  for (const f of directory.files) {
-    if (needed.has(f.path)) {
-      const buf = await f.buffer();
-      tables[f.path] = parse(buf.toString("utf8"), { columns: true, skip_empty_lines: true });
+  for (const entry of directory.files) {
+    if (need.has(entry.path)) {
+      const content = await entry.buffer();
+      tables[entry.path] = parse(content.toString("utf8"), {
+        columns: true,
+        skip_empty_lines: true
+      });
     }
   }
 
-  // Byg simple indeks for hurtigere opslag
+  // Indeks
   const tripsById = new Map();
   for (const t of tables["trips.txt"] || []) tripsById.set(t.trip_id, t);
 
@@ -68,22 +68,14 @@ async function loadGTFS() {
     list.push(st);
     stopTimesByStop.set(st.stop_id, list);
   }
-  // Sorter pr. stop efter afgangstid (hurtigere filtrering)
   for (const [sid, list] of stopTimesByStop.entries()) {
     list.sort((a, b) => hhmmssToMinutes(a.departure_time) - hhmmssToMinutes(b.departure_time));
   }
 
-  GTFS = {
-    raw: tables,
-    tripsById,
-    routesById,
-    stopTimesByStop
-  };
-  GTFS_LOADED_AT = new Date();
+  GTFS = { raw: tables, tripsById, routesById, stopTimesByStop };
   return GTFS;
 }
 
-/** Azure Function handler */
 export default async function (context, req) {
   try {
     const stopId = (req.query.stopId || "").trim();
@@ -92,23 +84,19 @@ export default async function (context, req) {
       return;
     }
 
-    // Load GTFS-data
     const { stopTimesByStop, tripsById, routesById } = await loadGTFS();
-
     const list = stopTimesByStop.get(stopId) || [];
 
     const nowMin = nowMinutes();
-    const windowMin = 6 * 60; // vis højst 6 timer frem (kan tweakes)
-    const lowerBound = nowMin - 2; // 2 min tolerance bagud
-    const upperBound = nowMin + windowMin;
-
-    // Filtrer på afgangstidspunkt (minutter siden midnat)
+    const lowerBound = nowMin - 2;      // 2 min tolerance
+    const upperBound = nowMin + 6 * 60; // 6 timer frem
     const upcoming = [];
+
     for (const st of list) {
       const dep = hhmmssToMinutes(st.departure_time);
-      if (dep === null) continue;
+      if (dep == null) continue;
       if (dep < lowerBound) continue;
-      if (dep > upperBound) break; // liste er sorteret
+      if (dep > upperBound) break;
 
       const trip = tripsById.get(st.trip_id);
       if (!trip) continue;
@@ -125,7 +113,7 @@ export default async function (context, req) {
         minutesUntil: dep - nowMin
       });
 
-      if (upcoming.length >= 12) break; // returnér max 12 linjer
+      if (upcoming.length >= 12) break;
     }
 
     context.res = {
