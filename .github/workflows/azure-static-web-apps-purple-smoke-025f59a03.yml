@@ -29,9 +29,9 @@ jobs:
           action: "upload"
 
           # === SWA konfiguration ===
-          app_location: "/"     # Din index.html ligger i roden
+          app_location: "/"     # Din index.html ligger i repo-roden
           api_location: "api"   # VIGTIGT: Deploy Azure Functions fra /api
-          output_location: "/"  # Ingen særskilt build-mappe; servér roden
+          output_location: ""   # Ingen separat build-mappe; lad den være tom
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
