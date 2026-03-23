@@ -8,7 +8,9 @@ export default async function (context, req) {
       "typeName=midttrafik:stoppesteder&" +
       "outputFormat=application/json";
 
-    const resp = await fetch(url, { headers: { accept: "application/json" } });
+    const resp = await fetch(url, {
+      headers: { accept: "application/json" }
+    });
 
     if (!resp.ok) {
       context.res = {
@@ -18,7 +20,7 @@ export default async function (context, req) {
       return;
     }
 
-    const text = await resp.text();
+    const json = await resp.text();
 
     context.res = {
       status: 200,
@@ -26,7 +28,7 @@ export default async function (context, req) {
         "content-type": "application/json",
         "cache-control": "public, max-age=60"
       },
-      body: text
+      body: json
     };
   } catch (err) {
     context.res = { status: 500, body: "Proxy error: " + err.message };
