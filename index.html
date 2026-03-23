@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OEX Kort – Topbar (AutoTrack + Kompas + Pitch + Status)</title>
 
-  <!-- Azure Maps Web SDK v3 -->
-  <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css"/>
+  <!-- Azure Maps Web SDK v3 (KORREKTE TAGS) -->
+  <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css" />
   <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
 
   <!-- OEX BRANDING -->
@@ -107,7 +107,7 @@
   const AZURE_MAPS_KEY = "D9dGgfb9BY3umCaFfsewjziUirXEz50b9Lhqszcrrq5jc0KiMYSuJQQJ99CBACi5YpzFQJVFAAAgAZMP1WG9"; // PAS PÅ: Hold nøgler hemmelige i produktion
   const OEX_BLUE = "#00B0F8";
 
-  // ===== Utils (validering/guards) =====
+  // ===== Utils =====
   function isFiniteNumber(n){ return typeof n === 'number' && Number.isFinite(n); }
   function isValidLatLon(lat,lng){ return isFiniteNumber(lat) && isFiniteNumber(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180; }
   function safeSetCenter(lat,lng,zoom=11.5,duration=500){ try{ if(isValidLatLon(lat,lng)) map.setCamera({ center:[lng,lat], zoom, duration }); }catch(e){} }
@@ -275,12 +275,11 @@
       stopsDs = new atlas.source.DataSource();
       map.sources.add(stopsDs);
 
-      // Robust loader: prøv proxyen først (ingen CORS), fald tilbage til direkte WFS
       async function loadStops() {
-        const proxyUrl = "/api/wfs-stops"; // virker hvis du har lavet proxy-functionen
+        const proxyUrl = "/api/wfs-stops"; // brug proxy hvis den findes
         const directUrl = "https://midttrafik.admin.gc2.io/ows/midttrafik/rute_wfs/?service=WFS&version=1.0.0&request=GetFeature&typeName=midttrafik:stoppesteder&outputFormat=application/json";
 
-        // prøv proxy
+        // prøv proxy først (ingen CORS)
         try {
           const r = await fetch(proxyUrl, { credentials: "omit" });
           if (r.ok) {
@@ -293,7 +292,7 @@
           console.warn("OEX: Proxy fejlede, prøver direkte WFS…", e);
         }
 
-        // fald tilbage til direkte WFS
+        // fallback: direkte WFS (kan ramme CORS)
         try {
           const r2 = await fetch(directUrl, { credentials: "omit" });
           if (!r2.ok) throw new Error("HTTP " + r2.status);
@@ -301,7 +300,7 @@
           addStopsToDs(geo2);
           console.info("OEX: Stops hentet direkte WFS:", directUrl);
         } catch (e) {
-          console.error("OEX: Direkte WFS fejlede (CORS?). Overvej /api/wfs-stops proxy.", e);
+          console.error("OEX: Direkte WFS fejlede (CORS?). Lav /api/wfs-stops proxy.", e);
         }
       }
 
@@ -331,7 +330,7 @@
       });
       map.layers.add(stopsLayer, "labels");
 
-      // Popup ved klik på stoppested
+      // Popup ved klik på stoppested (kalder dine API'er)
       popup = new atlas.Popup();
       map.events.add("click", stopsLayer, async (e) => {
         try {
