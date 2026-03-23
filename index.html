@@ -108,7 +108,8 @@
   function safeSetCenter(lat,lng,zoom=11.5,duration=500){ try{ if(isValidLatLon(lat,lng)) map.setCamera({ center:[lng,lat], zoom, duration }); }catch(e){} }
   function setStatusChip(text, live){ const el = document.getElementById('oex-gps-status'); if(!el) return; el.classList.toggle('oex-chip-on', !!live); el.classList.toggle('oex-chip-off', !live); el.innerHTML = '<span class="dot" aria-hidden="true"></span>' + text; }
   // ===== Azure Maps setup =====
-  let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer;
+  // --- OEX ADD: tilføjet stopsDs, stopsLayer, popup i globals
+  let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer, stopsDs, stopsLayer, popup;
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -252,6 +253,84 @@
       routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
       routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
       map.layers.add(routeLayer, "labels");
+
+      // --- OEX ADD: Stoppesteder uden labels (fjerner “01”-støj) ---
+      stopsDs = new atlas.source.DataSource();
+      map.sources.add(stopsDs);
+
+      fetch("https://midttrafik.admin.gc2.io/ows/midttrafik/rute_wfs/?service=WFS&version=1.0.0&request=GetFeature&typeName=midttrafik:stoppesteder&outputFormat=application/json")
+        .then(r => r.json())
+        .then(geo => {
+          const fc = {
+            type: "FeatureCollection",
+            features: (geo.features || []).map(f => {
+              const p = f.properties || {};
+              return {
+                type: "Feature",
+                geometry: f.geometry,
+                properties: {
+                  stopId: p.stop_id || p.id || "",
+                  stopName: p.name || p.navn || "Stoppested"
+                }
+              };
+            })
+          };
+          stopsDs.add(fc);
+        })
+        .catch(err => console.warn("WFS stop-fejl:", err));
+
+      stopsLayer = new atlas.layer.SymbolLayer(stopsDs, null, {
+        iconOptions: { image: "pin-round-darkblue", anchor: "center", allowOverlap: true },
+        textOptions: { textField: "", offset: [0, 1.2] } // <- ingen labels på kortet
+      });
+      map.layers.add(stopsLayer, "labels");
+
+      // --- OEX ADD: Popup til afgange ved klik på stoppested ---
+      popup = new atlas.Popup();
+      map.events.add("click", stopsLayer, async (e) => {
+        try {
+          const shape = e.shapes && e.shapes[0];
+          if (!shape) return;
+          const pos = shape.getCoordinates();
+          const coord = Array.isArray(pos[0]) ? pos[0] : pos;
+          const [lon, lat] = coord;
+
+          // 1) Find nærmeste GTFS-stop via eget API
+          const stopsUrl = `/api/stops?lat=${lat}&lon=${lon}&radius=150&limit=1`;
+          const sres = await fetch(stopsUrl);
+          const sjson = await sres.json();
+          if (!sjson.data || !sjson.data.length) {
+            popup.setOptions({ position: [lon, lat], content: "<div style='color:#fff;'>Ingen GTFS-stop</div>" });
+            popup.open(map);
+            return;
+          }
+          const nearest = sjson.data[0];
+
+          // 2) Hent afgange for dette stopId
+          const depUrl = `/api/departures?stopId=${encodeURIComponent(nearest.stopId)}`;
+          const dres = await fetch(depUrl);
+          const djson = await dres.json();
+
+          const rows = (djson.data || []).map(d => {
+            const rn = d.routeShortName || d.routeId || "";
+            const hd = d.headsign ? ` → ${d.headsign}` : "";
+            const mins = (typeof d.minutesUntil === "number" && d.minutesUntil >= 0) ? ` (${d.minutesUntil} min)` : "";
+            return `<div><b>${rn}</b>${hd} — ${d.departureTime}${mins}</div>`;
+          }).join("");
+
+          const html = `
+            <div style="min-width:220px; color:#fff;">
+              <div style="font-weight:700; margin-bottom:6px;">${nearest.stopName}</div>
+              ${rows || "Ingen afgange i nær fremtid"}
+            </div>
+          `;
+          popup.setOptions({ position: [lon, lat], content: html });
+          popup.open(map);
+        } catch (err) {
+          console.error(err);
+        }
+      });
+
       try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }
       try{ map.controls.add(new atlas.control.PitchControl(), { position: 'top-right' }); }catch(e){ console.warn('PitchControl add fail', e); }
       document.getElementById("applyBtn").addEventListener("click", () => updateMapFromForm(false));
