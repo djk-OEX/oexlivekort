@@ -10,9 +10,17 @@
       "redirect": "/.auth/logout",
       "statusCode": 302
     },
+
+    // >>> OEX: Åbn ALLE API-ruter for anonymous (nødvendigt for /api/wfs-stops, /api/stops, /api/departures)
+    {
+      "route": "/api/*",
+      "allowedRoles": [ "anonymous" ]
+    },
+
+    // Alt andet kræver fortsat login (som før)
     {
       "route": "/*",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": [ "authenticated" ]
     }
   ],
   "responseOverrides": {
@@ -25,8 +33,14 @@
       "statusCode": 404
     }
   },
+
+  // Sørg for at SPA-routing ikke sluger /api/*
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/assets/*", "/*.{png,jpg,jpeg,gif,ico,css,js}"]
+    "exclude": [
+      "/api/*",
+      "/assets/*",
+      "/*.{png,jpg,jpeg,gif,ico,css,js}"
+    ]
   }
 }
