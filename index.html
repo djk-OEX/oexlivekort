@@ -251,15 +251,10 @@
       map.layers.add([bubbleLayer, symbolLayer], "labels");
       routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
       routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
-       map.layers.add(routeLayer, "labels");
+      map.layers.add(routeLayer, "labels");
+      stopsDs = new atlas.source.DataSource();
+      map.sources.add(stopsDs);
 
-// ===== OEX: Dynamisk rute-stop indlæsning (KUN ved A→B) =====
-
-// Datasource til stoppesteder
-stopsDs = new atlas.source.DataSource();
-map.sources.add(stopsDs);
-
-// Lag til stoppesteder
 stopsLayer = new atlas.layer.SymbolLayer(stopsDs, null, {
     iconOptions: {
         image: "pin-round-darkblue",
@@ -270,24 +265,21 @@ stopsLayer = new atlas.layer.SymbolLayer(stopsDs, null, {
 });
 map.layers.add(stopsLayer, "labels");
 
-// Distance beregner (Haversine – meter)
 function oexDist(lat1, lon1, lat2, lon2){
-    const R=6371000;
-    const dLat=(lat2-lat1) * Math.PI/180;
-    const dLon=(lon2-lon1) * Math.PI/180;
-    const a=Math.sin(dLat/2)**2 +
-              Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180) *
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI/180;
+    const dLon = (lon2 - lon1) * Math.PI/180;
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
               Math.sin(dLon/2)**2;
-    return 2*R*Math.asin(Math.sqrt(a));
+    return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// Hent ALLE stops fra dit Static Web Apps API
 async function oexLoadAllStops(){
     const r = await fetch("/api/wfs-stops");
     return await r.json();
 }
 
-// Filtrer stops langs rute (300 m buffer)
 async function oexLoadStopsAlongRoute(coords){
     if(!coords || coords.length < 2) return;
 
@@ -295,48 +287,13 @@ async function oexLoadStopsAlongRoute(coords){
     const fc = { type:"FeatureCollection", features:[] };
 
     for(const f of all.features){
-        // ROBUST koord-mapping (dit feed kan være [lon,lat] eller [lat,lon])
+
         const c = f.geometry.coordinates;
         const isLonLat = (Math.abs(c[0]) <= 20 && Math.abs(c[1]) <= 90);
 
         const slon = isLonLat ? c[0] : c[1];
         const slat = isLonLat ? c[1] : c[0];
 
-        // tjek stop mod ruten
-        for(const [rlon, rlat] of coords){
-            if(oexDist(slat, slon, rlat, rlon) <= 300){
-                fc.features.push(f);
-                break;
-            }
-        }
-    }
-
-    stopsDs.clear();
-    stopsDs.add(fc);
-}
-
-// ===== slut på OEX rute-stop patch =====
-
-try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }     
-// Hent ALLE stops fra dit API (det du VED virker)
-async function oexLoadAllStops(){
-    const r = await fetch("/api/wfs-stops");
-    return await r.json();
-}
-
-// Filtrer stops langs ruten (300m fra ethvert punkt)
-async function oexLoadStopsAlongRoute(coords){
-    if(!coords || coords.length < 2) return;
-
-    const all = await oexLoadAllStops();
-
-    const fc = { type:"FeatureCollection", features:[] };
-
-    // For hvert stop...
-    for(const f of all.features){
-        const [slat, slon] = f.geometry.coordinates;
-
-        // Check afstand til rutepunkter
         for(const [rlon, rlat] of coords){
             if(oexDist(slat, slon, rlat, rlon) <= 300){
                 fc.features.push(f);
@@ -475,8 +432,7 @@ async function oexLoadStopsAlongRoute(coords){
       legs.forEach(leg=>{ (leg.points||[]).forEach(p=>{ if(isValidLatLon(p.latitude, p.longitude)){ coords.push([p.longitude,p.latitude]); } }); });
       if(coords.length<2) return;
       routeSource.add(new atlas.data.Feature(new atlas.data.LineString(coords)));
-      // OEX: filtrer stoppesteder langs ruten
-oexLoadStopsAlongRoute(coords);
+      oexLoadStopsAlongRoute(coords);
       try { map.setCamera({ bounds: atlas.data.BoundingBox.fromLatLngs(coords), padding: 60, duration: 500 }); } catch(e) {}
       setTimeout(safeResize, 50);
     }catch(e){ console.error('Azure Maps route fejl:', e); }
