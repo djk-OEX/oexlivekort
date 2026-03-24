@@ -251,35 +251,73 @@
       map.layers.add([bubbleLayer, symbolLayer], "labels");
       routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
       routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
-      map.layers.add(routeLayer, "labels");
-      // ===== OEX: Dynamisk rute-stop indlæsning =====
+       map.layers.add(routeLayer, "labels");
+
+// ===== OEX: Dynamisk rute-stop indlæsning (KUN ved A→B) =====
 
 // Datasource til stoppesteder
 stopsDs = new atlas.source.DataSource();
 map.sources.add(stopsDs);
 
-// Stop-lag (samme stil som din tidligere version)
+// Lag til stoppesteder
 stopsLayer = new atlas.layer.SymbolLayer(stopsDs, null, {
-    iconOptions: { 
+    iconOptions: {
         image: "pin-round-darkblue",
         anchor: "center",
-        allowOverlap: true 
+        allowOverlap: true
     },
     textOptions: { textField: "", offset: [0, 1.2] }
 });
 map.layers.add(stopsLayer, "labels");
 
-// Distance (meter)
+// Distance beregner (Haversine – meter)
 function oexDist(lat1, lon1, lat2, lon2){
-    const R = 6371000;
-    const dLat = (lat2-lat1) * Math.PI/180;
-    const dLon = (lon2-lon1) * Math.PI/180;
-    const a = Math.sin(dLat/2)**2 +
+    const R=6371000;
+    const dLat=(lat2-lat1) * Math.PI/180;
+    const dLon=(lon2-lon1) * Math.PI/180;
+    const a=Math.sin(dLat/2)**2 +
               Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180) *
               Math.sin(dLon/2)**2;
     return 2*R*Math.asin(Math.sqrt(a));
 }
 
+// Hent ALLE stops fra dit Static Web Apps API
+async function oexLoadAllStops(){
+    const r = await fetch("/api/wfs-stops");
+    return await r.json();
+}
+
+// Filtrer stops langs rute (300 m buffer)
+async function oexLoadStopsAlongRoute(coords){
+    if(!coords || coords.length < 2) return;
+
+    const all = await oexLoadAllStops();
+    const fc = { type:"FeatureCollection", features:[] };
+
+    for(const f of all.features){
+        // ROBUST koord-mapping (dit feed kan være [lon,lat] eller [lat,lon])
+        const c = f.geometry.coordinates;
+        const isLonLat = (Math.abs(c[0]) <= 20 && Math.abs(c[1]) <= 90);
+
+        const slon = isLonLat ? c[0] : c[1];
+        const slat = isLonLat ? c[1] : c[0];
+
+        // tjek stop mod ruten
+        for(const [rlon, rlat] of coords){
+            if(oexDist(slat, slon, rlat, rlon) <= 300){
+                fc.features.push(f);
+                break;
+            }
+        }
+    }
+
+    stopsDs.clear();
+    stopsDs.add(fc);
+}
+
+// ===== slut på OEX rute-stop patch =====
+
+try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }     
 // Hent ALLE stops fra dit API (det du VED virker)
 async function oexLoadAllStops(){
     const r = await fetch("/api/wfs-stops");
