@@ -544,33 +544,6 @@
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); localStorage.removeItem("oex_addr2"); const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; updateMapFromForm(false); }
   function setupPressAndHold(selector, delta){ const btn = document.querySelector(selector); if (!btn) return; let t = null; const step = () => { const cam = map.getCamera(); map.setCamera({ zoom: cam.zoom + delta, animate:true, duration:50 }); }; const start = () => { step(); if (!t) t = setInterval(step, 60); }; const stop = () => { if (t){ clearInterval(t); t = null; } }; btn.addEventListener('mousedown', start); document.addEventListener('mouseup', stop); btn.addEventListener('mouseleave', stop); btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); start(); }, {passive:false}); document.addEventListener('touchend', stop); document.addEventListener('touchcancel', stop); }
    
-  // ===== OEX My Position =====
-let oexWatchId = null;
-
-function oexGetMyPosition(){
-    try{
-        navigator.geolocation.getCurrentPosition(
-            pos => {
-                const lat = pos.coords.latitude;
-                const lng = pos.coords.longitude;
-
-                safeSetCenter(lat, lng, 15.5, 600);
-                setStatusChip("LIVE • GPS", true);
-
-                // OEX: filtrer stoppesteder indenfor 800 m
-                oexLoadStopsNearMe(lat, lng);
-            },
-            err => {
-                console.warn("oexGetMyPosition fejl:", err);
-                setStatusChip("FEJL", false);
-            },
-            { enableHighAccuracy:true }
-        );
-    }catch(e){
-        console.warn("MyPos exception:", e);
-    }
-}
-
   // ===== IP fallback / geolocation (uændret logik) =====
   // ... (behold din eksisterende oexIpFallbackCenter, oexGetMyPosition, auto-track osv. hvis du ønsker) ...
 
