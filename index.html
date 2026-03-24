@@ -4,15 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OEX Kort – Topbar (AutoTrack + Kompas + Pitch + Status)</title>
-
-  <!-- Azure Maps Web SDK v3 (KORREKTE TAGS) -->
+  <!-- Azure Maps Web SDK v3 -->
   <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css"/>
   <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
-
   <!-- OEX BRANDING -->
   <meta name="color-scheme" content="dark"/>
   <style>
-    :root{ --oex-bg:#000; --oex-text:#fff; --oex-accent:#00B0F8; --oex-fig:#363636; }
+    :root{ --oex-bg:#000000; --oex-text:#ffffff; --oex-accent:#00B0F8; --oex-fig:#363636; }
     html, body{ margin:0; height:100%; background:var(--oex-bg); color:var(--oex-text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body{ display:flex; flex-direction:column; min-height:100vh; }
     header{ position:sticky; top:0; z-index:40; padding:10px 12px; background:#000; border-bottom:1px solid var(--oex-fig); box-shadow:0 4px 14px rgba(0,0,0,.35); }
@@ -26,7 +24,7 @@
     .suggestions{ position:absolute; left:12px; right:12px; background:#0f0f10; border:1px solid var(--oex-fig); border-top:none; border-radius:0 0 8px 8px; max-height:220px; overflow:auto; z-index:50; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
     .suggestion{ padding:8px 10px; cursor:pointer; border-top:1px solid #222; font-size:13px; color:#eaeaea; }
     .suggestion:hover{ background:#11161a; color:#fff; }
-    .hint{ font-size:11px; color:#bbb; }
+    .hint{ font-size:11px; color:#bbbbbb; }
     .logo{ height: 48px; display:block; margin:2px 0 6px 0; }
     .toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
     .actions{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
@@ -97,33 +95,28 @@
       </div>
     </div>
   </header>
-
   <div class="map-wrap">
     <div id="map" role="region" aria-label="Kort med to markører (A og B) og rute"></div>
   </div>
-
   <script>
   // ===== Konfiguration =====
   const AZURE_MAPS_KEY = "D9dGgfb9BY3umCaFfsewjziUirXEz50b9Lhqszcrrq5jc0KiMYSuJQQJ99CBACi5YpzFQJVFAAAgAZMP1WG9"; // PAS PÅ: Hold nøgler hemmelige i produktion
   const OEX_BLUE = "#00B0F8";
-
-  // ===== Utils =====
+  // ===== Utils (validering/guards) =====
   function isFiniteNumber(n){ return typeof n === 'number' && Number.isFinite(n); }
   function isValidLatLon(lat,lng){ return isFiniteNumber(lat) && isFiniteNumber(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180; }
   function safeSetCenter(lat,lng,zoom=11.5,duration=500){ try{ if(isValidLatLon(lat,lng)) map.setCamera({ center:[lng,lat], zoom, duration }); }catch(e){} }
   function setStatusChip(text, live){ const el = document.getElementById('oex-gps-status'); if(!el) return; el.classList.toggle('oex-chip-on', !!live); el.classList.toggle('oex-chip-off', !live); el.innerHTML = '<span class="dot" aria-hidden="true"></span>' + text; }
-
   // ===== Azure Maps setup =====
-  let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer, stopsDs, stopsLayer, popup;
+  let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer;
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
   function safeResize(){ try{ if(map) map.resize(); }catch(e){} }
-
   // ===== URL <-> STATE =====
   const OEX_DEFAULT_VIEW = { lat: 56.1629, lng: 10.2039, z: 12, b: 0, p: 0 };
+  // from=me: auto-start geolocation to use as Punkt A
   const _oexFrom = new URL(window.location.href).searchParams.get('from');
-
   // --- OEX VIEW MODE (dark | 3d | reality) ---
   let _oexView = 'dark';
   function oexApplyView(view){
@@ -147,7 +140,6 @@
     const btn = document.getElementById('viewToggleBtn');
     if(btn){ btn.textContent = 'VISNING: ' + (_oexView==='reality'?'VIRKELIGHED':(_oexView==='3d'?'3D':'DARK')); }
   }
-
   function oexGetUrlState() {
     const u = new URL(window.location.href);
     const o = {
@@ -190,7 +182,6 @@
     out.pos2 = parsePos(o.pos2);
     return out;
   }
-
   async function oexApplyUrlStateOnLoad(){
     const s = oexGetUrlState();
     let applied = false;
@@ -217,7 +208,6 @@
     try{ oexApplyView(s.view); }catch(_){ }
     return applied;
   }
-
   let oexUrlWriteTimer = null;
   function oexSyncUrlFromCamera(){
     try {
@@ -232,7 +222,6 @@
       oexUrlWriteTimer = setTimeout(() => { history.replaceState(null, '', u.toString()); }, 120);
     } catch(_) {}
   }
-
   window.addEventListener('popstate', () => {
     const s = oexGetUrlState();
     if (!map) return;
@@ -242,7 +231,6 @@
     try{ oexApplyView(s.view); }catch(_){ }
     updateMapFromForm(true);
   });
-
   // ===== Init kort =====
   function initMap(){
     map = new atlas.Map("map", {
@@ -252,140 +240,45 @@
       zoom: 12,
       autoResize: true
     });
-
     map.events.add("ready", async () => {
-      datasource = new atlas.source.DataSource(); 
-      map.sources.add(datasource);
-
-      // A/B markører
+      datasource = new atlas.source.DataSource(); map.sources.add(datasource);
+      // *** OEX ændring: fyldte blå cirkler uden omrids ***
       bubbleLayer = new atlas.layer.BubbleLayer(datasource, null, { radius: 8, color: OEX_BLUE, opacity: 1, strokeWidth: 0 });
       symbolLayer = new atlas.layer.SymbolLayer(datasource, null, {
         textOptions: { textField: ["coalesce", ["get","label"], ["get","title"]], color: "#FFFFFF", offset: [0,-2], size: 13 },
         iconOptions: { image: "none" }
       });
       map.layers.add([bubbleLayer, symbolLayer], "labels");
-
-      // Rutelag
-      routeSource = new atlas.source.DataSource(); 
-      map.sources.add(routeSource);
+      routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
       routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
       map.layers.add(routeLayer, "labels");
-
-      // --- Stoppesteder via proxy (ingen CORS/mixed content) ---
-      stopsDs = new atlas.source.DataSource();
-      map.sources.add(stopsDs);
-
-      try {
-        const r = await fetch("/api/wfs-stops", { credentials: "omit" });
-        if (!r.ok) throw new Error("HTTP "+r.status);
-        const geo = await r.json();
-        const fc = {
-          type: "FeatureCollection",
-          features: (geo.features || []).map(f => {
-            const p = f.properties || {};
-            return {
-              type: "Feature",
-              geometry: f.geometry,
-              properties: {
-                stopId: p.stop_id || p.id || "",
-                stopName: p.name || p.navn || "Stoppested"
-              }
-            };
-          })
-        };
-        stopsDs.add(fc);
-      } catch (e) {
-        console.error("OEX: /api/wfs-stops fejlede → ingen stoppesteder.", e);
-      }
-
-      stopsLayer = new atlas.layer.SymbolLayer(stopsDs, null, {
-        iconOptions: { image: "pin-round-darkblue", anchor: "center", allowOverlap: true },
-        textOptions: { textField: "", offset: [0, 1.2] } // <-- ingen labels på kort
-      });
-      map.layers.add(stopsLayer, "labels");
-
-      // Popup ved klik på stoppested
-      popup = new atlas.Popup();
-      map.events.add("click", stopsLayer, async (e) => {
-        try {
-          const shape = e.shapes && e.shapes[0];
-          if (!shape) return;
-          const pos = shape.getCoordinates();
-          const coord = Array.isArray(pos[0]) ? pos[0] : pos;
-          const [lon, lat] = coord;
-
-          // 1) Find nærmeste GTFS-stop via eget API
-          const stopsUrl = `/api/stops?lat=${lat}&lon=${lon}&radius=150&limit=1`;
-          const sres = await fetch(stopsUrl);
-          if (!sres.ok) throw new Error("Stops lookup failed: " + sres.status);
-          const sjson = await sres.json();
-          if (!sjson.data || !sjson.data.length) {
-            popup.setOptions({ position: [lon, lat], content: "<div style='color:#fff;'>Ingen GTFS-stop</div>" });
-            popup.open(map);
-            return;
-          }
-          const nearest = sjson.data[0];
-
-          // 2) Hent afgange for dette stopId
-          const depUrl = `/api/departures?stopId=${encodeURIComponent(nearest.stopId)}`;
-          const dres = await fetch(depUrl);
-          if (!dres.ok) throw new Error("Departures failed: " + dres.status);
-          const djson = await dres.json();
-
-          const rows = (djson.data || []).map(d => {
-            const rn = d.routeShortName || d.routeId || "";
-            const hd = d.headsign ? ` → ${d.headsign}` : "";
-            const mins = (typeof d.minutesUntil === "number" && d.minutesUntil >= 0) ? ` (${d.minutesUntil} min)` : "";
-            return `<div><b>${rn}</b>${hd} — ${d.departureTime}${mins}</div>`;
-          }).join("");
-
-          const html = `
-            <div style="min-width:220px; color:#fff;">
-              <div style="font-weight:700; margin-bottom:6px;">${nearest.stopName}</div>
-              ${rows || "Ingen afgange i nær fremtid"}
-            </div>
-          `;
-          popup.setOptions({ position: [lon, lat], content: html });
-          popup.open(map);
-        } catch (err) {
-          console.error(err);
-        }
-      });
-
-      // Controls & knapper
       try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }
       try{ map.controls.add(new atlas.control.PitchControl(), { position: 'top-right' }); }catch(e){ console.warn('PitchControl add fail', e); }
-
       document.getElementById("applyBtn").addEventListener("click", () => updateMapFromForm(false));
       const oexMyBtn = document.getElementById("oex-mypos"); if (oexMyBtn) oexMyBtn.addEventListener("click", oexGetMyPosition);
       document.getElementById("resetBtn").addEventListener("click", resetOptional);
-
-      // Zoom hold
-      setupPressAndHold("#oex-zoom-in", +0.1); 
-      setupPressAndHold("#oex-zoom-out", -0.1);
-
-      // Adressesøgning init (forkortet)
+      setupPressAndHold("#oex-zoom-in", +0.1); setupPressAndHold("#oex-zoom-out", -0.1);
       [1,2].forEach(idx => {
         const addr = document.getElementById("addr"+idx);
         addr.addEventListener("input", () => onAddressInput(idx));
         addr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); triggerSearch(idx); } });
         document.addEventListener("click", (e) => { const sug = document.getElementById("sug"+idx); if (sug && !sug.contains(e.target) && e.target !== addr) { setTimeout(()=> sug.style.display = "none", 100); } });
       });
-
+      [1,2].forEach(async (idx) => {
+        const saved = localStorage.getItem("oex_addr"+idx);
+        if (saved && saved.trim()) { document.getElementById("addr"+idx).value = saved.trim(); fetchSuggestions(idx, saved.trim(), true); }
+      });
       ['lat1','lng1','lat2','lng2'].forEach(id=>{ const el=document.getElementById(id); if(el && (el.value==='0' || el.value==='0.0')) el.value=''; });
-
-      // URL state
+      // --- URL state først ---
       const applied = await oexApplyUrlStateOnLoad();
       if (!applied){
         await updateMapFromForm(true);
         zoomToJylland(0);
         try{ const cam = map.getCamera(); if (!cam.bearing || Math.abs(cam.bearing) < 0.01){ map.setCamera({ bearing: 0.1 }); } }catch(e){}
       }
-
-      // Auto-start 'Min position'
+      // Auto-start 'Min position' hvis from=me er sat i URL
       try{ if(_oexFrom === 'me'){ oexGetMyPosition(); } }catch(e){ console.warn('from=me init fejl', e); }
-
-      // VIEW toggle
+      // VIEW toggle button init + handler
       const _stateForView = oexGetUrlState();
       try{ oexApplyView(_stateForView.view); }catch(_){ }
       const viewBtn = document.getElementById('viewToggleBtn');
@@ -398,8 +291,6 @@
           oexSyncUrlFromCamera();
         });
       }
-
-      // Auto-track knap
       const atBtn = document.getElementById('autotrackBtn');
       if(atBtn){
         atBtn.addEventListener('click', ()=>{
@@ -407,10 +298,8 @@
           else { oexStopAutoTrack(); atBtn.textContent = 'Auto-spor: OFF'; atBtn.classList.add('secondary'); setStatusChip('PAUSE', false); }
         });
       }
-
       const shareBtn = document.getElementById('shareBtn');
       if(shareBtn){ shareBtn.addEventListener('click', oexShareCurrentView); }
-
       window.addEventListener('resize', safeResize);
       document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ setTimeout(safeResize, 50);} });
       window.addEventListener('orientationchange', ()=> setTimeout(safeResize, 250));
@@ -420,8 +309,7 @@
       map.events.add('rotateend', _oexSync);
     });
   }
-
-  // ===== Adresse-søgning (kort version) =====
+  // ===== Adresse-søgning =====
   function onAddressInput(idx){ clearTimeout(timers[idx]); const q = (document.getElementById("addr"+idx).value || "").trim(); if (!q) { showSuggestions(idx, []); return; } timers[idx] = setTimeout(()=> fetchSuggestions(idx, q), 450); }
   function triggerSearch(idx){ const q = (document.getElementById("addr"+idx).value || "").trim(); if (q) fetchSuggestions(idx, q, true); }
   async function fetchSuggestions(idx, query, chooseFirstIfAny=false){
@@ -446,12 +334,10 @@
   function selectSuggestion(idx, result){ const lat = result.position.lat, lng = result.position.lon; if (!isValidLatLon(lat,lng)) return; document.getElementById("lat"+idx).value = lat.toFixed(6); document.getElementById("lng"+idx).value = lng.toFixed(6); const free = (result.address && result.address.freeformAddress) ? result.address.freeformAddress : (document.getElementById("addr"+idx).value || "").trim(); localStorage.setItem("oex_addr"+idx, free); const nameEl = document.getElementById("name"+idx); if (!nameEl.value.trim()) { nameEl.value = (idx===1?"":""); } updateMapFromForm(false); }
   function setHint(idx, text){ const h = document.getElementById("hint"+idx); if (h) h.textContent = text || ""; }
   function readNum(id){ const el = document.getElementById(id); if (!el) return NaN; const v = (el.value || '').trim(); if (v === '' || v === '0' || v === '0.0') return NaN; const n = Number(v); if (!Number.isFinite(n) || n === 0) return NaN; return n; }
-
   // ===== Tegn markører/rute =====
   async function updateMapFromForm(keepZoom=false, suppressRoute=false){
     if (!datasource) return;
     datasource.clear();
-
     const entries = [1,2].map(i => ({ idx: i, name: (document.getElementById("name"+i).value || "").trim(), lat: readNum("lat"+i), lng: readNum("lng"+i) }));
     const newFeatures = [];
     entries.forEach(e => {
@@ -461,33 +347,18 @@
       }
     });
     if (newFeatures.length>0) { datasource.add(newFeatures); }
-
     if (!suppressRoute){ await drawRouteIfReady(); }
-
     if (!keepZoom) {
       const all = datasource.toJson(); const feats = (all && all.features) ? all.features : [];
       if (feats.length > 0) {
         if (feats.length === 1) {
-          try { 
-            const c = feats[0].geometry && feats[0].geometry.coordinates; 
-            if (Array.isArray(c) && c.length === 2 && isFiniteNumber(c[0]) && isFiniteNumber(c[1]) && !(c[1]===0 && c[0]===0)) {
-              map.setCamera({ center: c, zoom: 15.9, duration: 600 }); 
-            } else { 
-              const bbox = atlas.data.BoundingBox.fromData(all); 
-              map.setCamera({ bounds: bbox, padding: 60, duration: 600 }); 
-            }
-          } catch(e) { 
-            const bbox = atlas.data.BoundingBox.fromData(all); 
-            map.setCamera({ bounds: bbox, padding: 60, duration: 600 }); 
-          }
+          try { const c = feats[0].geometry && feats[0].geometry.coordinates; if (Array.isArray(c) && c.length === 2 && isFiniteNumber(c[0]) && isFiniteNumber(c[1]) && !(c[1]===0 && c[0]===0)) { map.setCamera({ center: c, zoom: 15.9, duration: 600 }); } else { const bbox = atlas.data.BoundingBox.fromData(all); map.setCamera({ bounds: bbox, padding: 60, duration: 600 }); } } catch(e) { const bbox = atlas.data.BoundingBox.fromData(all); map.setCamera({ bounds: bbox, padding: 60, duration: 600 }); }
         } else {
-          const bbox = atlas.data.BoundingBox.fromData(all); 
-          map.setCamera({ bounds: bbox, padding: 60, duration: 600 });
+          const bbox = atlas.data.BoundingBox.fromData(all); map.setCamera({ bounds: bbox, padding: 60, duration: 600 });
         }
       } else { zoomToJylland(300); }
     }
   }
-
   async function drawRouteIfReady(){
     if (!routeSource) return; routeSource.clear();
     const lat1 = readNum("lat1"), lng1 = readNum("lng1"), lat2 = readNum("lat2"), lng2 = readNum("lng2");
@@ -511,14 +382,158 @@
       setTimeout(safeResize, 50);
     }catch(e){ console.error('Azure Maps route fejl:', e); }
   }
-
-  // ===== Reset / zoom =====
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); localStorage.removeItem("oex_addr2"); const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; updateMapFromForm(false); }
   function setupPressAndHold(selector, delta){ const btn = document.querySelector(selector); if (!btn) return; let t = null; const step = () => { const cam = map.getCamera(); map.setCamera({ zoom: cam.zoom + delta, animate:true, duration:50 }); }; const start = () => { step(); if (!t) t = setInterval(step, 60); }; const stop = () => { if (t){ clearInterval(t); t = null; } }; btn.addEventListener('mousedown', start); document.addEventListener('mouseup', stop); btn.addEventListener('mouseleave', stop); btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); start(); }, {passive:false}); document.addEventListener('touchend', stop); document.addEventListener('touchcancel', stop); }
-
-  // ===== IP fallback / geolocation (uændret logik) =====
-  // ... (behold din eksisterende oexIpFallbackCenter, oexGetMyPosition, auto-track osv. hvis du ønsker) ...
-
+  // ===== IP FALLBACK =====
+  let _oexTriedIpFallback = false;
+  function parseBoundsFromResult(r){
+    if (!r) return null;
+    if (r.viewport && r.viewport.topLeftPoint && r.viewport.btmRightPoint){
+      const tl = r.viewport.topLeftPoint; const br = r.viewport.btmRightPoint;
+      if (isFiniteNumber(tl.lat) && isFiniteNumber(tl.lon) && isFiniteNumber(br.lat) && isFiniteNumber(br.lon))
+        return [tl.lon, br.lat, br.lon, tl.lat];
+    }
+    if (r.boundingBox && r.boundingBox.northEast && r.boundingBox.southWest){
+      const ne = r.boundingBox.northEast; const sw = r.boundingBox.southWest;
+      if (isFiniteNumber(ne.lat) && isFiniteNumber(ne.lon) && isFiniteNumber(sw.lat) && isFiniteNumber(sw.lon))
+        return [sw.lon, sw.lat, ne.lon, ne.lat];
+    }
+    return null;
+  }
+  async function oexIpFallbackCenter(){
+    if (_oexTriedIpFallback) return; // kun én gang pr. session
+    try{
+      const ipUrl = 'https://atlas.microsoft.com/geolocation/ip/json?api-version=1.0&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY);
+      const ipRes = await fetch(ipUrl, {credentials:'omit'});
+      if(!ipRes.ok){ console.warn('IP fallback HTTP', ipRes.status); throw new Error('HTTP '+ipRes.status); }
+      const ipData = await ipRes.json();
+      let lat=null, lng=null, bbox=null, cc=null;
+      if (ipData && ipData.location && isFiniteNumber(ipData.location.lat) && isFiniteNumber(ipData.location.lon)){
+        lat = ipData.location.lat; lng = ipData.location.lon;
+      }
+      if (ipData && ipData.countryCode){ cc = ipData.countryCode; }
+      if ((lat===null || lng===null) && cc){
+        const fUrl = 'https://atlas.microsoft.com/search/fuzzy/json?api-version=1.0&limit=1&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY) + '&query=' + encodeURIComponent(cc);
+        const fRes = await fetch(fUrl, {credentials:'omit'});
+        if (fRes.ok){
+          const fData = await fRes.json();
+          const r = (fData && fData.results && fData.results[0]) || null;
+          bbox = parseBoundsFromResult(r);
+          if (!bbox && r && r.position && isValidLatLon(r.position.lat, r.position.lon)){
+            lat = r.position.lat; lng = r.position.lon;
+          }
+        }
+      }
+      const latEl = document.getElementById('lat1');
+      const lngEl = document.getElementById('lng1');
+      const nameEl = document.getElementById('name1');
+      if (isValidLatLon(lat,lng)){
+        if (latEl) latEl.value = lat.toFixed(6);
+        if (lngEl) lngEl.value = lng.toFixed(6);
+        if (nameEl && !nameEl.value.trim()) nameEl.value = 'IP-LOKATION (GROV)';
+        await updateMapFromForm(false, true);
+        safeSetCenter(lat, lng, 8.5, 600);
+        setStatusChip('IP • GROV' + (cc?(' ('+cc+')'):'') , false);
+        _oexTriedIpFallback = true;
+      } else if (Array.isArray(bbox) && bbox.length===4 && bbox.every(isFiniteNumber)){
+        if (nameEl && !nameEl.value.trim()) nameEl.value = 'IP-LOKATION (LAND)';
+        await updateMapFromForm(false, true);
+        try{ map.setCamera({ bounds: bbox, padding: 60, duration: 600 }); }catch(e){}
+        setStatusChip('IP • GROV' + (cc?(' ('+cc+')'):'') , false);
+        _oexTriedIpFallback = true;
+      } else {
+        console.warn('IP fallback: ingen brugbar lokation/bounds. Ingen zoom.');
+      }
+    }catch(e){ console.warn('IP fallback fejlede', e); }
+  }
+  // ===== Min position / Auto-track =====
+  async function oexGetMyPosition(){
+    if (!navigator.geolocation){ alert('Geolocation ikke understøttet i denne browser. Viser grov IP-lokation.'); await oexIpFallbackCenter(); return; }
+    const geoget = (opts)=> new Promise((resolve,reject)=>{ navigator.geolocation.getCurrentPosition(resolve, reject, opts); });
+    let pos=null;
+    try{ pos = await geoget({ enableHighAccuracy:true, timeout:8000, maximumAge:0 }); }
+    catch(e1){
+      try{ pos = await geoget({ enableHighAccuracy:false, timeout:8000, maximumAge:60000 }); }
+      catch(e2){ await oexIpFallbackCenter(); alert('Kunne ikke hente præcis position. Viser grov IP-lokation.'); return; }
+    }
+    if (!pos || !pos.coords){ await oexIpFallbackCenter(); return; }
+    const lat = Number(pos.coords.latitude), lng = Number(pos.coords.longitude);
+    if (!isValidLatLon(lat,lng)){ await oexIpFallbackCenter(); return; }
+    const latEl = document.getElementById('lat1'); const lngEl = document.getElementById('lng1'); const nameEl = document.getElementById('name1');
+    if (latEl) latEl.value = lat.toFixed(6); if (lngEl) lngEl.value = lng.toFixed(6); if (nameEl && !nameEl.value.trim()) nameEl.value = 'MIN POSITION';
+    const addrEl = document.getElementById('addr1'); if (addrEl && !addrEl.value.trim()) addrEl.value = 'MIN POSITION';
+    const hdg = (pos.coords && typeof pos.coords.heading === 'number' && Number.isFinite(pos.coords.heading)) ? pos.coords.heading : null; if (hdg !== null) { try{ map.setCamera({ bearing: hdg }); }catch(e){} }
+    setStatusChip('LIVE • GPS', true);
+    updateMapFromForm(false);
+  }
+  function updateGpsStatus(on){ setStatusChip(on? 'LIVE • GPS':'PAUSE', !!on); }
+  let oexWatchId = null; let oexAutoCenter = true;
+  function oexStartAutoTrack(options={highAccuracy:true}){
+    if (!('geolocation' in navigator)) { alert('Geolocation ikke understøttet i denne browser. Viser grov IP-lokation.'); oexIpFallbackCenter(); return; }
+    if (oexWatchId!==null) return; updateGpsStatus(true);
+    try{
+      oexWatchId = navigator.geolocation.watchPosition(
+        (pos)=>{
+          if(!pos||!pos.coords) return; const lat=Number(pos.coords.latitude), lng=Number(pos.coords.longitude); if(!isValidLatLon(lat,lng)) return;
+          const latEl=document.getElementById('lat1'); const lngEl=document.getElementById('lng1'); const nameEl=document.getElementById('name1');
+          if (latEl) latEl.value=lat.toFixed(6); if (lngEl) lngEl.value=lng.toFixed(6); if (nameEl && !nameEl.value.trim()) nameEl.value='MIN POSITION';
+          updateMapFromForm(true, /*suppressRoute*/ true);
+          if (oexAutoCenter){ try{ const cam=map.getCamera(); map.setCamera({ center:[lng,lat], zoom: cam.zoom||15.5, duration:300 }); }catch(e){} }
+          try{ if(typeof pos.coords.heading==='number' && Number.isFinite(pos.coords.heading)){ map.setCamera({ bearing: pos.coords.heading }); } }catch(e){}
+        },
+        async (err)=>{
+          console.warn('watchPosition fejl:', err);
+          const msg = err && err.code===1 ? 'TILLADELSE NÆGTET' : (err && err.code===2 ? 'POSITION UTILGÆNGELIG' : 'TIMEOUT');
+          setStatusChip(msg, false);
+          await oexIpFallbackCenter();
+          updateGpsStatus(false);
+        },
+        { enableHighAccuracy: !!options.highAccuracy, maximumAge: 5000, timeout: 10000 }
+      );
+    }catch(e){ console.error('Kunne ikke starte auto-tracking:', e); }
+  }
+  function oexStopAutoTrack(){ if (oexWatchId!==null){ try{ navigator.geolocation.clearWatch(oexWatchId); }catch(_){} oexWatchId=null; } updateGpsStatus(false); }
+  // ===== DEL / SHARE =====
+  function oexBuildShareUrl(){
+    try{
+      const cam = map && map.getCamera ? map.getCamera() : {};
+      const center = cam && cam.center ? cam.center : [10.2039,56.1629];
+      const zoom = (cam && typeof cam.zoom==='number' && Number.isFinite(cam.zoom)) ? cam.zoom : 12;
+      const bearing = (cam && typeof cam.bearing==='number' && Number.isFinite(cam.bearing)) ? cam.bearing : 0;
+      const pitch = (cam && typeof cam.pitch==='number' && Number.isFinite(cam.pitch)) ? cam.pitch : 0;
+      const params = new URLSearchParams();
+      const a1 = (document.getElementById('addr1')?.value||'').trim();
+      const a2 = (document.getElementById('addr2')?.value||'').trim();
+      if(a1) params.set('addr1', a1);
+      if(a2) params.set('addr2', a2);
+      const lat1 = (document.getElementById('lat1')?.value||'').trim();
+      const lng1 = (document.getElementById('lng1')?.value||'').trim();
+      const lat2 = (document.getElementById('lat2')?.value||'').trim();
+      const lng2 = (document.getElementById('lng2')?.value||'').trim();
+      if(lat1 && lng1){ params.set('pos1', `${lat1},${lng1}`); }
+      if(lat2 && lng2){ params.set('pos2', `${lat2},${lng2}`); }
+      if(Array.isArray(center) && center.length===2){ params.set('center', `${center[1].toFixed(6)},${center[0].toFixed(6)}`); }
+      params.set('zoom', Number(zoom||0).toFixed(2));
+      params.set('bearing', Number(bearing||0).toFixed(1));
+      params.set('pitch', Number(pitch||0).toFixed(1));
+      const live = document.getElementById('oex-gps-status')?.textContent?.includes('LIVE') ? '1' : '0';
+      params.set('live', live);
+      params.set('view', _oexView);
+      const url = `${location.origin}${location.pathname}?${params.toString()}`;
+      return url;
+    }catch(e){ console.warn('oexBuildShareUrl fejl', e); return location.href; }
+  }
+  function oexShareCurrentView(){
+    const url = oexBuildShareUrl();
+    if(navigator.share){ try{ navigator.share({ title: document.title || 'OEX Kort', url }); }catch(_){/* ignore */} }
+    try{ window.prompt('Kopiér link til visningen:', url); }catch(_){ }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url).then(()=>{
+        setStatusChip('LINK KOPIERET', false);
+        setTimeout(()=>{ const live = (oexWatchId!==null); setStatusChip(live? 'LIVE • GPS':'PAUSE', live); }, 1200);
+      }).catch(()=>{});
+    }
+  }
   // Boot
   window.addEventListener("DOMContentLoaded", initMap);
   </script>
