@@ -296,7 +296,7 @@ async function oexLoadStopsAlongRoute(coords){
 
     // For hvert stop...
     for(const f of all.features){
-        const [slon, slat] = f.geometry.coordinates;
+        const [slat, slon] = f.geometry.coordinates;
 
         // Check afstand til rutepunkter
         for(const [rlon, rlat] of coords){
