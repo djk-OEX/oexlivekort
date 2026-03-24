@@ -1,9 +1,0 @@
-{
-  "name": "oex-api",
-  "version": "1.0.0",
-  "type": "module",
-  "dependencies": {
-    "csv-parse": "^5.5.0",
-    "unzipper": "^0.10.11"
-  }
-}
