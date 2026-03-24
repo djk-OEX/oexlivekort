@@ -286,27 +286,31 @@
         return 2*R*Math.asin(Math.sqrt(a));
       }
 
-      // Loader stops fra BLOB og filtrerer dem
-      async function oexLoadStopsFiltered(centerLat, centerLon, maxDistMeters){
-        try{
-          const r = await fetch("https://oexazfilkonto.blob.core.windows.net/gtfs/GTFS.zip"); 
-          const j = await r.json();
+      // Loader stops fra BLOB/API og filtrerer dem
+    async function oexLoadStopsFiltered(centerLat, centerLon, maxDistMeters){
+  try{
+      // Brug den rigtige GTFS-til-GeoJSON endpoint
+    const r = await fetch("/api/wfs-stops");
+    const j = await r.json();
 
-          const fc = { type:"FeatureCollection", features:[] };
-          for(const f of j.features){
-            const [lon,lat] = f.geometry.coordinates;
-            if(oexDist(centerLat,centerLon,lat,lon) <= maxDistMeters){
-              fc.features.push(f);
-            }
-          }
+    const fc = { type:"FeatureCollection", features:[] };
 
-          stopsDs.clear();
-          stopsDs.add(fc);
-        }catch(err){
-          console.error("OEX stopfilter fejl:", err);
-        }
+    for(const f of j.features){
+      const [lon,lat] = f.geometry.coordinates;
+
+      if(oexDist(centerLat,centerLon,lat,lon) <= maxDistMeters){
+        fc.features.push(f);
       }
+    }
 
+    stopsDs.clear();
+    stopsDs.add(fc);
+
+  }catch(err){
+    console.error("OEX stopfilter fejl:", err);
+  }
+}
+      
       // Stops langs rute (brug rute midtpunkt)
       function oexLoadStopsAlongRoute(coords){
         if(!coords || !coords.length) return;
