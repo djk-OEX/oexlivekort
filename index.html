@@ -44,7 +44,30 @@
     .oex-chip .dot{ width:8px; height:8px; border-radius:50%; background:var(--oex-fig); display:inline-block; } 
     .oex-chip-on{ border-color: var(--oex-accent); } 
     .oex-chip-on .dot{ background: var(--oex-accent); } 
-    svg.map-icon { width:20px; height:20px; stroke:var(--oex-accent); stroke-width:1.5; fill:none; }
+    svg.map-icon { width:20px; height:20px; stroke:var(--oex-accent); stroke-width:1.8; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+
+    @media (forced-colors: active) {
+      :root{ --oex-accent:#00B0F8 !important; --oex-fig:#363636 !important; }
+      html, body{ background:#000000 !important; color:#ffffff !important; }
+      header{ background:#000 !important; border-bottom-color:#363636 !important; }
+      .card{ border-color:#363636 !important; background:#0b0b0b !important; }
+      label{ color:#e8e8e8 !important; }
+      input[type="text"], input[type="number"]{ border-color:#363636 !important; background:#121212 !important; color:#ffffff !important; }
+      input::placeholder{ color:#00B0F8 !important; }
+      .suggestions{ background:#0f0f10 !important; border-color:#363636 !important; }
+      .suggestion{ border-top-color:#222 !important; color:#eaeaea !important; }
+      .suggestion:hover{ background:#11161a !important; color:#fff !important; }
+      .hint{ color:#bbbbbb !important; }
+      button{ background:#00B0F8 !important; color:#00131B !important; }
+      button.secondary{ background:transparent !important; color:#00B0F8 !important; border-color:#363636 !important; }
+      .oex-btn{ border-color:#363636 !important; background:#000000 !important; color:#00B0F8 !important; }
+      .oex-btn:focus{ outline-color:#00B0F8 !important; }
+      svg.map-icon { stroke:#00B0F8 !important; }
+      .oex-chip{ border-color:#363636 !important; background:#0b0b0b !important; color:#fff !important; }
+      .oex-chip .dot{ background:#363636 !important; }
+      .oex-chip-on{ border-color:#00B0F8 !important; }
+      .oex-chip-on .dot{ background:#00B0F8 !important; }
+    }
   </style>
 </head>
 <body>
@@ -89,7 +112,8 @@
             <button id="applyBtn" class="oex-btn" aria-label="Opdater kort" title="Opdater kort">↻</button>
             <button id="viewToggleBtn" class="oex-btn" aria-label="Skift visning" title="Skift visning (Dark / 3D / Virkelighed)">
               <svg class="map-icon" viewBox="0 0 24 24">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                <path d="M4 6h16M4 12h16M4 18h16M8 3v4M16 3v4M8 9v6M16 9v6M12 15v6" stroke-dasharray="2,2"/>
+                <circle cx="12" cy="12" r="3"/>
               </svg>
             </button>
           </div>
