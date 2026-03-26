@@ -31,13 +31,11 @@
     .toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
     .actions{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     button{ background:var(--oex-accent); color:#00131B; border:none; padding:10px 14px; border-radius:8px; font-weight:700; cursor:pointer; }
-    button.secondary{ background:transparent; color:var(--oex-accent); border:1px solid var(--oex-fig); }
+    button.secondary{ background:transparent; color:var(--oex-accent); border:2px solid var(--oex-accent); }
     .oex-zoom-wrap{ display:flex; gap:8px; }
     .oex-btn{ width:40px; height:40px; border-radius:10px; border:2px solid var(--oex-accent); background:#000000; color:var(--oex-accent); font-weight:700; font-size:20px; line-height:1; cursor:pointer; user-select:none; box-shadow:0 2px 8px rgba(0,0,0,.35);} 
     .oex-btn:active{ transform:scale(0.98);} 
     .oex-btn:focus{ outline:2px solid var(--oex-accent); outline-offset:2px;} 
-    #applyBtn{ background:transparent; color:var(--oex-accent); border:2px solid var(--oex-accent); }
-    #applyBtn:hover{ background:rgba(0,176,248,0.1); }
     .azure-map-control a{ color:var(--oex-accent) !important; } 
     #map{ flex:1 1 auto; min-height:0; height:100%; } 
     .map-wrap{ position:relative; flex:1 1 auto; min-height:0; } 
@@ -86,15 +84,15 @@
           <div class="oex-zoom-wrap" aria-label="Zoom-kontrol">
             <button id="oex-zoom-in" class="oex-btn" aria-label="Zoom ind" title="Zoom ind (+)">+</button>
             <button id="oex-zoom-out" class="oex-btn" aria-label="Zoom ud" title="Zoom ud (–)">–</button>
+            <button id="oex-mypos" class="oex-btn" aria-label="Min position" title="Min position">•</button>
+            <button id="applyBtn" class="oex-btn" aria-label="Opdater kort" title="Opdater kort">↻</button>
+            <button id="viewToggleBtn" class="oex-btn" aria-label="Skift visning" title="Skift visning (Dark / 3D / Virkelighed)">🗺️</button>
           </div>
-          <button id="oex-mypos" class="oex-btn" aria-label="Min position" title="Min position" style="font-size:24px;">•</button>
           <div class="actions">
-            <button id="applyBtn" title="Opdater markører">Opdater kort</button>
             <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
             <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
             <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
             <button class="secondary" id="shareBtn" title="Del visning">Del</button>
-            <button class="secondary" id="viewToggleBtn" title="Skift visning (Dark / 3D / Virkelighed)">VISNING: DARK</button>
           </div>
         </div>
       </div>
@@ -136,21 +134,16 @@
         const cam = map.getCamera();
         map.setCamera({ pitch: 0, bearing: cam.bearing||0 });
       } else if(_oexView==='3d'){
-        // Keep grayscale_dark, ensure a street-level zoom and pitch
         map.setStyle({ style: 'grayscale_dark' });
         const cam = map.getCamera();
         const targetZoom = (cam.zoom && cam.zoom < 17) ? 17 : (cam.zoom||17);
         map.setCamera({ zoom: targetZoom, pitch: 60, bearing: cam.bearing||0, duration: 250 });
       } else {
-        // dark (2D)
         map.setStyle({ style: 'grayscale_dark' });
         const cam = map.getCamera();
         map.setCamera({ pitch: 0, bearing: cam.bearing||0 });
       }
     }catch(e){ console.warn('oexApplyView error', e); }
-    // Update button label if available
-    const btn = document.getElementById('viewToggleBtn');
-    if(btn){ btn.textContent = 'VISNING: ' + (_oexView==='reality'?'VIRKELIGHED':(_oexView==='3d'?'3D':'DARK')); }
   }
 
   function oexGetUrlState() {
@@ -223,7 +216,7 @@
 
     if (map) {
       map.setCamera({ center:[s.lng, s.lat], zoom:s.z, bearing:s.b, pitch:s.p, duration:0 });
-      applied = applied || true; // mindst kamera
+      applied = applied || true;
     }
 
     setStatusChip(s.live ? 'LIVE • GPS' : 'PAUSE', s.live);
@@ -268,7 +261,6 @@
 
     map.events.add("ready", async () => {
       datasource = new atlas.source.DataSource(); map.sources.add(datasource);
-      // *** OEX ÆNDRING: Fyldte blå pins uden outline ***
       bubbleLayer = new atlas.layer.BubbleLayer(datasource, null, { radius: 8, color: OEX_BLUE, opacity: 1, strokeWidth: 0, strokeOpacity: 0 });
       symbolLayer = new atlas.layer.SymbolLayer(datasource, null, {
         textOptions: { textField: ["coalesce", ["get","label"], ["get","title"]], color: "#FFFFFF", offset: [0,-2], size: 13 },
@@ -302,16 +294,13 @@
 
       ['lat1','lng1','lat2','lng2'].forEach(id=>{ const el=document.getElementById(id); if(el && (el.value==='0' || el.value==='0.0')) el.value=''; });
 
-      // --- URL state først ---
       const applied = await oexApplyUrlStateOnLoad();
       if (!applied){
-        // Standard initialisering hvis ingen URL-state
         await updateMapFromForm(true);
         zoomToJylland(0);
         try{ const cam = map.getCamera(); if (!cam.bearing || Math.abs(cam.bearing) < 0.01){ map.setCamera({ bearing: 0.1 }); } }catch(e){}
       }
 
-      // VIEW toggle button init + handler
       const _stateForView = oexGetUrlState();
       try{ oexApplyView(_stateForView.view); }catch(_){ }
       const viewBtn = document.getElementById('viewToggleBtn');
@@ -340,7 +329,6 @@
       document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ setTimeout(safeResize, 50);} });
       window.addEventListener('orientationchange', ()=> setTimeout(safeResize, 250));
 
-      // Sync kamera -> URL
       const _oexSync = () => oexSyncUrlFromCamera();
       map.events.add('moveend', _oexSync);
       map.events.add('pitchchanged', _oexSync);
@@ -446,7 +434,7 @@
     return null;
   }
   async function oexIpFallbackCenter(){
-    if (_oexTriedIpFallback) return; // kun én gang pr. session
+    if (_oexTriedIpFallback) return;
     try{
       const ipUrl = 'https://atlas.microsoft.com/geolocation/ip/json?api-version=1.0&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY);
       const ipRes = await fetch(ipUrl, {credentials:'omit'});
@@ -523,7 +511,7 @@
           if(!pos||!pos.coords) return; const lat=Number(pos.coords.latitude), lng=Number(pos.coords.longitude); if(!isValidLatLon(lat,lng)) return;
           const latEl=document.getElementById('lat1'); const lngEl=document.getElementById('lng1'); const nameEl=document.getElementById('name1');
           if (latEl) latEl.value=lat.toFixed(6); if (lngEl) lngEl.value=lng.toFixed(6); if (nameEl && !nameEl.value.trim()) nameEl.value='MIN POSITION';
-          updateMapFromForm(true, /*suppressRoute*/ true);
+          updateMapFromForm(true, true);
           if (oexAutoCenter){ try{ const cam=map.getCamera(); map.setCamera({ center:[lng,lat], zoom: cam.zoom||15.5, duration:300 }); }catch(e){} }
           try{ if(typeof pos.coords.heading==='number' && Number.isFinite(pos.coords.heading)){ map.setCamera({ bearing: pos.coords.heading }); } }catch(e){}
         },
@@ -577,7 +565,7 @@
   }
   function oexShareCurrentView(){
     const url = oexBuildShareUrl();
-    if(navigator.share){ try{ navigator.share({ title: document.title || 'OEX Kort', url }); }catch(_){/* ignore */} }
+    if(navigator.share){ try{ navigator.share({ title: document.title || 'OEX Kort', url }); }catch(_){} }
     try{ window.prompt('Kopiér link til visningen:', url); }catch(_){ }
     if(navigator.clipboard && navigator.clipboard.writeText){
       navigator.clipboard.writeText(url).then(()=>{
