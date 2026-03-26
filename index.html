@@ -22,7 +22,7 @@
     .card h2{ margin:0 0 10px 0; font-size:14px; font-weight:700; }
     label{ display:block; font-size:12px; margin:6px 0 4px; color:#e8e8e8; }
     input[type="text"], input[type="number"]{ width:100%; max-width:420px; padding:8px 10px; border-radius:8px; border:1px solid var(--oex-fig); background:#121212; color:var(--oex-text); outline:none; }
-    input::placeholder{ color:#9e9e9e; }
+    input::placeholder{ color:var(--oex-accent); }
     .suggestions{ position:absolute; left:12px; right:12px; background:#0f0f10; border:1px solid var(--oex-fig); border-top:none; border-radius:0 0 8px 8px; max-height:220px; overflow:auto; z-index:50; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
     .suggestion{ padding:8px 10px; cursor:pointer; border-top:1px solid #222; font-size:13px; color:#eaeaea; }
     .suggestion:hover{ background:#11161a; color:#fff; }
@@ -44,6 +44,7 @@
     .oex-chip .dot{ width:8px; height:8px; border-radius:50%; background:var(--oex-fig); display:inline-block; } 
     .oex-chip-on{ border-color: var(--oex-accent); } 
     .oex-chip-on .dot{ background: var(--oex-accent); } 
+    svg.map-icon { width:20px; height:20px; stroke:var(--oex-accent); stroke-width:1.5; fill:none; }
   </style>
 </head>
 <body>
@@ -86,7 +87,11 @@
             <button id="oex-zoom-out" class="oex-btn" aria-label="Zoom ud" title="Zoom ud (–)">–</button>
             <button id="oex-mypos" class="oex-btn" aria-label="Min position" title="Min position">•</button>
             <button id="applyBtn" class="oex-btn" aria-label="Opdater kort" title="Opdater kort">↻</button>
-            <button id="viewToggleBtn" class="oex-btn" aria-label="Skift visning" title="Skift visning (Dark / 3D / Virkelighed)">🗺️</button>
+            <button id="viewToggleBtn" class="oex-btn" aria-label="Skift visning" title="Skift visning (Dark / 3D / Virkelighed)">
+              <svg class="map-icon" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+              </svg>
+            </button>
           </div>
           <div class="actions">
             <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
