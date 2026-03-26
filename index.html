@@ -13,61 +13,38 @@
   <meta name="color-scheme" content="dark"/>
   <style>
     :root{ --oex-bg:#000000; --oex-text:#ffffff; --oex-accent:#00B0F8; --oex-fig:#363636; }
-    html, body{ margin:0; height:100%; background:var(--oex-bg); color:var(--oex-text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    html, body{ margin:0; height:100%; background:var(--oex-bg) !important; color:var(--oex-text) !important; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body{ display:flex; flex-direction:column; min-height:100vh; }
-    header{ position:sticky; top:0; z-index:40; padding:10px 12px; background:#000; border-bottom:1px solid var(--oex-fig); box-shadow:0 4px 14px rgba(0,0,0,.35); }
+    header{ position:sticky; top:0; z-index:40; padding:10px 12px; background:#000 !important; border-bottom:1px solid var(--oex-fig); box-shadow:0 4px 14px rgba(0,0,0,.35); }
     .content{ max-width:1200px; margin:0 auto; }
     .form-grid{ display:grid; grid-template-columns: repeat(2, minmax(240px, 520px)); gap:12px; align-items:start; }
-    .card{ border:1px solid var(--oex-fig); border-radius:10px; padding:12px; background:#0b0b0b; position:relative; }
+    .card{ border:1px solid var(--oex-fig); border-radius:10px; padding:12px; background:#0b0b0b !important; position:relative; }
     .card h2{ margin:0 0 10px 0; font-size:14px; font-weight:700; }
-    label{ display:block; font-size:12px; margin:6px 0 4px; color:#e8e8e8; }
-    input[type="text"], input[type="number"]{ width:100%; max-width:420px; padding:8px 10px; border-radius:8px; border:1px solid var(--oex-fig); background:#121212; color:var(--oex-text); outline:none; }
-    input::placeholder{ color:var(--oex-accent); }
-    .suggestions{ position:absolute; left:12px; right:12px; background:#0f0f10; border:1px solid var(--oex-fig); border-top:none; border-radius:0 0 8px 8px; max-height:220px; overflow:auto; z-index:50; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
-    .suggestion{ padding:8px 10px; cursor:pointer; border-top:1px solid #222; font-size:13px; color:#eaeaea; }
-    .suggestion:hover{ background:#11161a; color:#fff; }
-    .hint{ font-size:11px; color:#bbbbbb; }
+    label{ display:block; font-size:12px; margin:6px 0 4px; color:#e8e8e8 !important; }
+    input[type="text"], input[type="number"]{ width:100%; max-width:420px; padding:8px 10px; border-radius:8px; border:1px solid var(--oex-fig); background:#121212 !important; color:var(--oex-text) !important; outline:none; }
+    input::placeholder{ color:var(--oex-accent) !important; }
+    .suggestions{ position:absolute; left:12px; right:12px; background:#0f0f10 !important; border:1px solid var(--oex-fig); border-top:none; border-radius:0 0 8px 8px; max-height:220px; overflow:auto; z-index:50; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+    .suggestion{ padding:8px 10px; cursor:pointer; border-top:1px solid #222; font-size:13px; color:#eaeaea !important; }
+    .suggestion:hover{ background:#11161a !important; color:#fff !important; }
+    .hint{ font-size:11px; color:#bbbbbb !important; }
     .logo{ height: 48px; display:block; margin:2px 0 6px 0; }
     .toolbar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
     .actions{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    button{ background:var(--oex-accent); color:#00131B; border:none; padding:10px 14px; border-radius:8px; font-weight:700; cursor:pointer; }
-    button.secondary{ background:transparent; color:var(--oex-accent); border:2px solid var(--oex-fig); }
+    button{ background:var(--oex-accent) !important; color:#00131B !important; border:none; padding:10px 14px; border-radius:8px; font-weight:700; cursor:pointer; }
+    button.secondary{ background:transparent !important; color:var(--oex-accent) !important; border:2px solid var(--oex-fig) !important; }
     .oex-zoom-wrap{ display:flex; gap:8px; }
-    .oex-btn{ width:40px; height:40px; border-radius:10px; border:2px solid var(--oex-fig); background:#000000; color:var(--oex-accent); font-weight:700; font-size:20px; line-height:1; cursor:pointer; user-select:none; box-shadow:0 2px 8px rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; text-align:center; } 
+    .oex-btn{ width:40px; height:40px; border-radius:10px; border:2px solid var(--oex-fig) !important; background:#000000 !important; color:var(--oex-accent) !important; font-weight:700; font-size:20px; line-height:1; cursor:pointer; user-select:none; box-shadow:0 2px 8px rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; text-align:center; } 
     .oex-btn:active{ transform:scale(0.98);} 
-    .oex-btn:focus{ outline:2px solid var(--oex-accent); outline-offset:2px;} 
+    .oex-btn:focus{ outline:2px solid var(--oex-accent) !important; outline-offset:2px;} 
     .azure-map-control a{ color:var(--oex-accent) !important; } 
     #map{ flex:1 1 auto; min-height:0; height:100%; } 
     .map-wrap{ position:relative; flex:1 1 auto; min-height:0; } 
     @media (max-width: 820px){ .form-grid{ grid-template-columns: 1fr; } } 
-    .oex-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:9999px; border:1px solid var(--oex-fig); background:#0b0b0b; color:#fff; font-weight:700; font-size:12px; } 
+    .oex-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:9999px; border:1px solid var(--oex-fig) !important; background:#0b0b0b !important; color:#fff !important; font-weight:700; font-size:12px; } 
     .oex-chip .dot{ width:8px; height:8px; border-radius:50%; background:var(--oex-fig); display:inline-block; } 
-    .oex-chip-on{ border-color: var(--oex-accent); } 
-    .oex-chip-on .dot{ background: var(--oex-accent); } 
-    svg.map-icon { width:20px; height:20px; stroke:var(--oex-accent); stroke-width:1.8; fill:none; stroke-linecap:round; stroke-linejoin:round; }
-
-    @media (forced-colors: active) {
-      :root{ --oex-accent:#00B0F8 !important; --oex-fig:#363636 !important; }
-      html, body{ background:#000000 !important; color:#ffffff !important; }
-      header{ background:#000 !important; border-bottom-color:#363636 !important; }
-      .card{ border-color:#363636 !important; background:#0b0b0b !important; }
-      label{ color:#e8e8e8 !important; }
-      input[type="text"], input[type="number"]{ border-color:#363636 !important; background:#121212 !important; color:#ffffff !important; }
-      input::placeholder{ color:#00B0F8 !important; }
-      .suggestions{ background:#0f0f10 !important; border-color:#363636 !important; }
-      .suggestion{ border-top-color:#222 !important; color:#eaeaea !important; }
-      .suggestion:hover{ background:#11161a !important; color:#fff !important; }
-      .hint{ color:#bbbbbb !important; }
-      button{ background:#00B0F8 !important; color:#00131B !important; }
-      button.secondary{ background:transparent !important; color:#00B0F8 !important; border-color:#363636 !important; }
-      .oex-btn{ border-color:#363636 !important; background:#000000 !important; color:#00B0F8 !important; }
-      .oex-btn:focus{ outline-color:#00B0F8 !important; }
-      svg.map-icon { stroke:#00B0F8 !important; }
-      .oex-chip{ border-color:#363636 !important; background:#0b0b0b !important; color:#fff !important; }
-      .oex-chip .dot{ background:#363636 !important; }
-      .oex-chip-on{ border-color:#00B0F8 !important; }
-      .oex-chip-on .dot{ background:#00B0F8 !important; }
-    }
+    .oex-chip-on{ border-color: var(--oex-accent) !important; } 
+    .oex-chip-on .dot{ background: var(--oex-accent) !important; } 
+    svg.map-icon { width:24px; height:24px; stroke:var(--oex-accent) !important; stroke-width:1.8; fill:none; stroke-linecap:round; stroke-linejoin:round; }
   </style>
 </head>
 <body>
