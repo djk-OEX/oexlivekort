@@ -23,14 +23,7 @@ input::placeholder {
 label { color:#FFFFFF !important; }
 input::placeholder { color:#00B0F8 !important; }
 input[type='text'], input[type='number'] { border-color:#363636 !important; }
-svg.map-icon { width:30px !important; height:30px !important; }
-
-
-/* TILFØJ DENNE LIGE HER */
-.oex-btn svg.map-icon {
-  width:30px !important;
-  height:30px !important;
-}
+.oex-btn 
 
 
     :root{ --oex-bg:#000000; --oex-text:#ffffff; --oex-accent:#00B0F8; --oex-fig:#363636; }
@@ -65,7 +58,7 @@ svg.map-icon { width:30px !important; height:30px !important; }
     .oex-chip .dot{ width:8px; height:8px; border-radius:50%; background:var(--oex-fig); display:inline-block; } 
     .oex-chip-on{ border-color: var(--oex-accent); } 
     .oex-chip-on .dot{ background: var(--oex-accent); } 
-    svg.map-icon { width:30px; height:30px; stroke:var(--oex-accent); stroke-width:1.8; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+    
 
     @media (forced-colors: active) {
       :root{ --oex-accent:#00B0F8 !important; --oex-fig:#363636 !important; }
@@ -83,13 +76,29 @@ svg.map-icon { width:30px !important; height:30px !important; }
       button.secondary{ background:transparent !important; color:#00B0F8 !important; border-color:#363636 !important; }
       .oex-btn{ border-color:#363636 !important; background:#000000 !important; color:#00B0F8 !important; }
       .oex-btn:focus{ outline-color:#00B0F8 !important; }
-      svg.map-icon { stroke:#00B0F8 !important; }
+      
       .oex-chip{ border-color:#363636 !important; background:#0b0b0b !important; color:#fff !important; }
       .oex-chip .dot{ background:#363636 !important; }
       .oex-chip-on{ border-color:#00B0F8 !important; }
       .oex-chip-on .dot{ background:#00B0F8 !important; }
     }
-  </style>
+  
+/* OEX SIZE TUNE */
+svg.map-icon {
+  width:24px !important;
+  height:24px !important;
+  min-width:24px !important;
+  min-height:24px !important;
+  max-width:24px !important;
+  max-height:24px !important;
+  stroke:var(--oex-accent) !important;
+  stroke-width:1.8 !important;
+  fill:none !important;
+  stroke-linecap:round !important;
+  stroke-linejoin:round !important;
+}
+
+</style>
 </head>
 <body>
   <header>
