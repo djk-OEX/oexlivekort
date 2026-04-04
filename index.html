@@ -195,6 +195,29 @@ svg.map-icon {
 
   // ===== Azure Maps setup =====
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer;
+  // ===== OEX HELPERS: Circle polygon (Azure Maps v3 kompatibel) =====
+function oexCreateCirclePolygon(center, radiusMeters, steps = 64) {
+  const [lng, lat] = center;
+  const coords = [];
+  const earthRadius = 6378137; // meter
+
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i / steps) * 2 * Math.PI;
+    const dx = radiusMeters * Math.cos(angle);
+    const dy = radiusMeters * Math.sin(angle);
+
+    const newLat = lat + (dy / earthRadius) * (180 / Math.PI);
+    const newLng =
+      lng +
+      (dx / earthRadius) * (180 / Math.PI) /
+      Math.cos(lat * Math.PI / 180);
+
+    coords.push([newLng, newLat]);
+  }
+
+  return new atlas.data.Polygon([coords]);
+}
+
   // ===== OEX PATCH C: KONFLIKT-FEED STATE =====
 let oexConflictSource;
 let oexConflictBufferLayer;
@@ -345,14 +368,6 @@ let oexConflictTimer = null;
     });
 
     map.events.add("ready", async () => {
-
-      console.log("✅ READY KØRER");
-
-document.getElementById("conflictToggleBtn")
-  ?.addEventListener("click", () => {
-    console.log("🔵 TOGGLE KLIK");
-  });
-
       datasource = new atlas.source.DataSource(); map.sources.add(datasource);
       bubbleLayer = new atlas.layer.BubbleLayer(datasource, null, { radius: 8, color: OEX_BLUE, opacity: 1, strokeWidth: 0, strokeOpacity: 0 });
       symbolLayer = new atlas.layer.SymbolLayer(datasource, null, {
@@ -386,27 +401,26 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
   }
 );
 
-// ✅ TEST: vis én manuel konflikt (KØRES ÉN GANG)
+// ✅ TEST: manuel konflikt (skal vises med det samme)
 (() => {
-  const lng = 10.2039;   // Aarhus
+  const lng = 10.2039; // Aarhus
   const lat = 56.1629;
 
   const point = new atlas.data.Feature(
     new atlas.data.Point([lng, lat])
   );
 
-  const buffer = new atlas.data.Feature(
-    atlas.math.getCirclePolygon([lng, lat], 25000, 36)
-  );
+  const polygon = oexCreateCirclePolygon([lng, lat], 25000);
+  const buffer = new atlas.data.Feature(polygon);
 
   oexConflictSource.add([buffer, point]);
 
-  map.layers.add(
-    [oexConflictBufferLayer, oexConflictPointLayer],
-    "labels"
-  );
+  map.layers.add([
+    oexConflictBufferLayer,
+    oexConflictPointLayer
+  ]);
 
-  console.log("✅ TEST‑konflikt tilføjet");
+  console.log("✅ TEST‑cirkel tegnet");
 })();
 
 // ===== OEX PATCH F: Toggle konflikter (KORREKT PLACERING) =====
