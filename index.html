@@ -686,6 +686,7 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
       }).catch(()=>{});
     }
   }
+    
   // ===== OEX PATCH E: GDELT FETCH + BUFFER =====
 async function oexLoadConflictFeed(){
   if (!oexConflictSource) return;
@@ -778,6 +779,7 @@ document.getElementById("conflictToggleBtn")?.addEventListener("click", function
     oexConflictVisible = false;
   }
 });
+    
   // Boot
   window.addEventListener("DOMContentLoaded", initMap);
   </script>
