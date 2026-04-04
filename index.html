@@ -147,16 +147,37 @@ svg.map-icon {
             </button>
           </div>
           <div class="actions">
-            <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
-            <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
-            <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
-            <button class="secondary" id="shareBtn" title="Del visning">Del</button>
-          </div>
-        </div>
+  <button class="secondary" id="resetBtn" title="Nulstil felter">
+    Nulstil
+  </button>
+
+  <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">
+    Auto-spor: OFF
+  </button>
+
+  <span id="oex-gps-status"
+        class="oex-chip oex-chip-off"
+        aria-live="polite"
+        title="GPS status">
+    <span class="dot" aria-hidden="true"></span>
+    PAUSE
+  </span>
+
+  <button class="secondary" id="shareBtn" title="Del visning">
+    Del
+  </button>
+
+  <!-- ✅ OEX PATCH A: Konflikt-toggle (ENESTE TILFØJELSE) -->
+  <button class="secondary"
+          id="conflictToggleBtn"
+          title="Vis/skjul konflikt-feed">
+    Konflikter: OFF
+  </button>
+</div>
       </div>
     </div>
-  </header>
-
+  </div>
+</header>
   <div class="map-wrap">
     <div id="map" role="region" aria-label="Kort med to markører (A og B) og rute"></div>
   </div>
@@ -174,6 +195,12 @@ svg.map-icon {
 
   // ===== Azure Maps setup =====
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer;
+  // ===== OEX PATCH C: KONFLIKT-FEED STATE =====
+let oexConflictSource;
+let oexConflictBufferLayer;
+let oexConflictPointLayer;
+let oexConflictVisible = false;
+let oexConflictTimer = null;
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -325,6 +352,33 @@ svg.map-icon {
         iconOptions: { image: "none" }
       });
       map.layers.add([bubbleLayer, symbolLayer], "labels");
+      // ===== OEX PATCH D: Init KONFLIKT-lag (Azure Maps) =====
+oexConflictSource = new atlas.source.DataSource();
+map.sources.add(oexConflictSource);
+
+// 🔴 Gennemsigtige buffer-zoner (25 km)
+oexConflictBufferLayer = new atlas.layer.PolygonLayer(
+  oexConflictSource,
+  null,
+  {
+    fillColor: "#8b0000",
+    fillOpacity: 0.25
+  }
+);
+
+// ⚫ Sorte prikker (konflikt-events)
+oexConflictPointLayer = new atlas.layer.BubbleLayer(
+  oexConflictSource,
+  null,
+  {
+    radius: 4,
+    color: "#000000",
+    strokeWidth: 0
+  }
+);
+
+// ❗ Lagene tilføjes IKKE til map her
+// Det sker via toggle i PATCH F
 
       routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
       routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
@@ -632,9 +686,110 @@ svg.map-icon {
       }).catch(()=>{});
     }
   }
+  // ===== OEX PATCH E: GDELT FETCH + BUFFER =====
+async function oexLoadConflictFeed(){
+  if (!oexConflictSource) return;
 
+  // Ryd tidligere data
+  oexConflictSource.clear();
+
+  // GDELT GeoJSON – simple konfliktsøgninger
+  const url =
+    "https://api.gdeltproject.org/api/v2/geo/geojson" +
+    "?query=conflict OR explosion OR fighting OR shelling" +
+    "&timespan=3d";
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    if (!data || !Array.isArray(data.features)) return;
+
+    data.features.forEach(f => {
+      if (!f.geometry || f.geometry.type !== "Point") return;
+
+      const [lng, lat] = f.geometry.coordinates;
+
+      // ⚫ Punkt (event)
+      const pointFeature = new atlas.data.Feature(
+        new atlas.data.Point([lng, lat])
+      );
+
+      // 🔴 Buffer (25 km)
+      const bufferPolygon = atlas.math.getCirclePolygon(
+        [lng, lat],
+        25000, // meter
+        36     // segmenter (glathed)
+      );
+
+      const bufferFeature = new atlas.data.Feature(bufferPolygon);
+
+      // Tilføj begge til datasourcen
+      oexConflictSource.add([bufferFeature, pointFeature]);
+    });
+
+  } catch (e) {
+    console.warn("OEX PATCH E: Konflikt-feed fejl", e);
+  }
+}
+
+// Auto-refresh helpers (bruges i PATCH F)
+function oexStartConflictFeed(){
+  oexLoadConflictFeed();
+  oexConflictTimer = setInterval(oexLoadConflictFeed, 30 * 60 * 1000);
+}
+
+function oexStopConflictFeed(){
+  if (oexConflictTimer){
+    clearInterval(oexConflictTimer);
+    oexConflictTimer = null;
+  }
+}
+
+// ===== OEX PATCH F: Toggle konflikter ON / OFF =====
+document.getElementById("conflictToggleBtn")?.addEventListener("click", function () {
+  if (!oexConflictVisible) {
+
+    // ✅ Vis konflikt-lagene
+    map.layers.add(
+      [oexConflictBufferLayer, oexConflictPointLayer],
+      "labels"
+    );
+
+    // ✅ Start feed + auto-refresh
+    oexStartConflictFeed();
+
+    // UI state
+    this.textContent = "Konflikter: ON";
+    oexConflictVisible = true;
+
+  } else {
+
+    // ❌ Skjul konflikt-lagene
+    map.layers.remove(oexConflictPointLayer);
+    map.layers.remove(oexConflictBufferLayer);
+
+    // ❌ Stop auto-refresh
+    oexStopConflictFeed();
+
+    // UI state
+    this.textContent = "Konflikter: OFF";
+    oexConflictVisible = false;
+  }
+});
   // Boot
   window.addEventListener("DOMContentLoaded", initMap);
   </script>
+<div class="oex-disclaimer"
+     style="background:#000;
+            border-top:1px solid #363636;
+            padding:8px 12px;
+            font-size:11px;
+            color:#ffffff;">
+  Viser geo-zoner hvor internationale nyhedsmedier nyligt har rapporteret om konflikter af en art.
+  OEX er ikke ansvarlig for disse data.
+  (GDELT indikativ visning)
+</div>
 </body>
 </html>
