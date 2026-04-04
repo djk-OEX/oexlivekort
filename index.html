@@ -773,10 +773,13 @@ async function oexLoadConflictFeed(){
 );
 
 const url =
-  "https://api.gdeltproject.org/api/v2/geo/query" +
-  "?query=" + query +
-  "&timespan=3d" +
-  "&mode=geojson";
+  "https://api.allorigins.win/raw?url=" +
+  encodeURIComponent(
+    "https://api.gdeltproject.org/api/v2/geo/query" +
+    "?query=" + query +
+    "&timespan=3d" +
+    "&mode=geojson"
+  );
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error("HTTP " + res.status);
