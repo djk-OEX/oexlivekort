@@ -352,6 +352,7 @@ let oexConflictTimer = null;
         iconOptions: { image: "none" }
       });
       map.layers.add([bubbleLayer, symbolLayer], "labels");
+
       // ===== OEX PATCH D: Init KONFLIKT-lag (Azure Maps) =====
 oexConflictSource = new atlas.source.DataSource();
 map.sources.add(oexConflictSource);
@@ -376,6 +377,34 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
     strokeWidth: 0
   }
 );
+
+/ ===== OEX PATCH F: Toggle konflikter (KORREKT PLACERING) =====
+  document.getElementById("conflictToggleBtn")?.addEventListener("click", function () {
+
+    if (!oexConflictSource) {
+      console.warn("OEX: Konflikt-source ikke klar endnu");
+      return;
+    }
+
+    if (!oexConflictVisible) {
+      map.layers.add(
+        [oexConflictBufferLayer, oexConflictPointLayer],
+        "labels"
+      );
+
+      oexStartConflictFeed();
+      this.textContent = "Konflikter: ON";
+      oexConflictVisible = true;
+
+    } else {
+      map.layers.remove(oexConflictPointLayer);
+      map.layers.remove(oexConflictBufferLayer);
+
+      oexStopConflictFeed();
+      this.textContent = "Konflikter: OFF";
+      oexConflictVisible = false;
+    }
+  });
 
 // ❗ Lagene tilføjes IKKE til map her
 // Det sker via toggle i PATCH F
@@ -686,7 +715,6 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
       }).catch(()=>{});
     }
   }
-    
   // ===== OEX PATCH E: GDELT FETCH + BUFFER =====
 async function oexLoadConflictFeed(){
   if (!oexConflictSource) return;
@@ -697,7 +725,7 @@ async function oexLoadConflictFeed(){
   // GDELT GeoJSON – simple konfliktsøgninger
   const url =
     "https://api.gdeltproject.org/api/v2/geo/geojson" +
-    "?query=conflict OR explosion OR fighting OR shelling" +
+    "?query=conflict OR explosion OR fighting OR shelling OR war" +
     "&timespan=3d";
 
   try {
@@ -748,50 +776,9 @@ function oexStopConflictFeed(){
   }
 }
 
-// ===== OEX PATCH F: Toggle konflikter ON / OFF =====
-document.getElementById("conflictToggleBtn")?.addEventListener("click", function () {
-  if (!oexConflictVisible) {
 
-    // ✅ Vis konflikt-lagene
-    map.layers.add(
-      [oexConflictBufferLayer, oexConflictPointLayer],
-      "labels"
-    );
-
-    // ✅ Start feed + auto-refresh
-    oexStartConflictFeed();
-
-    // UI state
-    this.textContent = "Konflikter: ON";
-    oexConflictVisible = true;
-
-  } else {
-
-    // ❌ Skjul konflikt-lagene
-    map.layers.remove(oexConflictPointLayer);
-    map.layers.remove(oexConflictBufferLayer);
-
-    // ❌ Stop auto-refresh
-    oexStopConflictFeed();
-
-    // UI state
-    this.textContent = "Konflikter: OFF";
-    oexConflictVisible = false;
-  }
-});
-    
   // Boot
   window.addEventListener("DOMContentLoaded", initMap);
   </script>
-<div class="oex-disclaimer"
-     style="background:#000;
-            border-top:1px solid #363636;
-            padding:8px 12px;
-            font-size:11px;
-            color:#ffffff;">
-  Viser geo-zoner hvor internationale nyhedsmedier nyligt har rapporteret om konflikter af en art.
-  OEX er ikke ansvarlig for disse data.
-  (GDELT indikativ visning)
-</div>
 </body>
 </html>
