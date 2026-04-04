@@ -378,6 +378,29 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
   }
 );
 
+// ✅ TEST: vis én manuel konflikt (KØRES ÉN GANG)
+(() => {
+  const lng = 10.2039;   // Aarhus
+  const lat = 56.1629;
+
+  const point = new atlas.data.Feature(
+    new atlas.data.Point([lng, lat])
+  );
+
+  const buffer = new atlas.data.Feature(
+    atlas.math.getCirclePolygon([lng, lat], 25000, 36)
+  );
+
+  oexConflictSource.add([buffer, point]);
+
+  map.layers.add(
+    [oexConflictBufferLayer, oexConflictPointLayer],
+    "labels"
+  );
+
+  console.log("✅ TEST‑konflikt tilføjet");
+})();
+
 // ===== OEX PATCH F: Toggle konflikter (KORREKT PLACERING) =====
   document.getElementById("conflictToggleBtn")?.addEventListener("click", function () {
 
@@ -780,7 +803,8 @@ function oexStopConflictFeed(){
   }
 }
 
-// Boot
+
+  // Boot
   window.addEventListener("DOMContentLoaded", initMap);
   </script>
 </body>
