@@ -145,10 +145,10 @@ svg.map-icon {
                 <circle cx="12" cy="12" r="3"/>
               </svg>
             </button>
+            <button class="oex-btn" id="travelModeBtn" title="Skift mellem bilrute og gårute">BIL</button>
           </div>
           <div class="actions">
             <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
-            <button class="secondary" id="travelModeBtn" title="Skift mellem bilrute og gårute">Rute: BIL</button>
             <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
             <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
             <button class="secondary" id="shareBtn" title="Del visning">Del</button>
@@ -389,7 +389,7 @@ svg.map-icon {
       if(travelModeBtn){
         travelModeBtn.addEventListener('click', ()=>{
           currentTravelMode = (currentTravelMode === 'car') ? 'pedestrian' : 'car';
-          travelModeBtn.textContent = currentTravelMode === 'car' ? 'Rute: BIL' : 'Rute: GÅ';
+          travelModeBtn.textContent = currentTravelMode === 'car' ? 'BIL' : 'GÅ';
           drawRouteIfReady();
         });
       }
