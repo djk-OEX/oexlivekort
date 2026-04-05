@@ -148,6 +148,7 @@ svg.map-icon {
           </div>
           <div class="actions">
             <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
+            <button class="secondary" id="travelModeBtn" title="Skift mellem bilrute og gårute">Rute: BIL</button>
             <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
             <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
             <button class="secondary" id="shareBtn" title="Del visning">Del</button>
@@ -174,6 +175,7 @@ svg.map-icon {
 
   // ===== Azure Maps setup =====
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer;
+  let currentTravelMode = 'car';
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -383,6 +385,15 @@ svg.map-icon {
       const shareBtn = document.getElementById('shareBtn');
       if(shareBtn){ shareBtn.addEventListener('click', oexShareCurrentView); }
 
+      const travelModeBtn = document.getElementById('travelModeBtn');
+      if(travelModeBtn){
+        travelModeBtn.addEventListener('click', ()=>{
+          currentTravelMode = (currentTravelMode === 'car') ? 'pedestrian' : 'car';
+          travelModeBtn.textContent = currentTravelMode === 'car' ? 'Rute: BIL' : 'Rute: GÅ';
+          drawRouteIfReady();
+        });
+      }
+
       window.addEventListener('resize', safeResize);
       document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ setTimeout(safeResize, 50);} });
       window.addEventListener('orientationchange', ()=> setTimeout(safeResize, 250));
@@ -455,7 +466,7 @@ svg.map-icon {
     try{
       const url = "https://atlas.microsoft.com/route/directions/json"+
         "?api-version=1.0"+
-        "&travelMode=car"+
+        "&travelMode="+encodeURIComponent(currentTravelMode)+
         "&subscription-key="+encodeURIComponent(AZURE_MAPS_KEY)+
         "&query="+encodeURIComponent(`${lat1},${lng1}:${lat2},${lng2}`);
       const res = await fetch(url, { credentials: 'omit' });
