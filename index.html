@@ -345,7 +345,7 @@ svg.map-icon {
       try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }
       try{ map.controls.add(new atlas.control.PitchControl(), { position: 'top-right' }); }catch(e){ console.warn('PitchControl add fail', e); }
 
-      document.getElementById("applyBtn").addEventListener("click", () => updateMapFromForm(false));
+      document.getElementById("applyBtn").addEventListener("click", oexAutoUpdate);
       const oexMyBtn = document.getElementById("oex-mypos"); if (oexMyBtn) oexMyBtn.addEventListener("click", oexGetMyPosition);
       document.getElementById("resetBtn").addEventListener("click", resetOptional);
       setupPressAndHold("#oex-zoom-in", +0.1); setupPressAndHold("#oex-zoom-out", -0.1);
@@ -389,10 +389,10 @@ const routeModeBtn = document.getElementById('routeModeBtn');
 if (routeModeBtn) {
   routeModeBtn.addEventListener('click', () => {
 
-    // toggle mellem car og pedestrian
+    // Skift transporttype
     oexRouteMode = (oexRouteMode === 'car') ? 'pedestrian' : 'car';
 
-    // skift KUN ikon (ingen tekst)
+    // Skift ikon (kun ikon – OEX-style)
     routeModeBtn.innerHTML =
       (oexRouteMode === 'car')
         ? `
@@ -408,8 +408,8 @@ if (routeModeBtn) {
             <path d="M12 12l3 5"></path>
           </svg>`;
 
-    // gen-tegn rute (samme A-B, ny transport)
-    updateMapFromForm(true);
+    // ✅ ALT opdateres automatisk
+    oexAutoUpdate();
   });
 }
 
