@@ -345,7 +345,7 @@ svg.map-icon {
       try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }
       try{ map.controls.add(new atlas.control.PitchControl(), { position: 'top-right' }); }catch(e){ console.warn('PitchControl add fail', e); }
 
-      document.getElementById("applyBtn").addEventListener("click", oexAutoUpdate);
+      document.getElementById("applyBtn").addEventListener("click", () => updateMapFromForm(false));
       const oexMyBtn = document.getElementById("oex-mypos"); if (oexMyBtn) oexMyBtn.addEventListener("click", oexGetMyPosition);
       document.getElementById("resetBtn").addEventListener("click", resetOptional);
       setupPressAndHold("#oex-zoom-in", +0.1); setupPressAndHold("#oex-zoom-out", -0.1);
