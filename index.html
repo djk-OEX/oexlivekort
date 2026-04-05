@@ -139,6 +139,17 @@ svg.map-icon {
             <button id="oex-zoom-out" class="oex-btn" aria-label="Zoom ud" title="Zoom ud (–)">–</button>
             <button id="oex-mypos" class="oex-btn" aria-label="Min position" title="Min position">•</button>
             <button id="applyBtn" class="oex-btn" aria-label="Opdater kort" title="Opdater kort">↻</button>
+            <button id="routeModeBtn"
+        class="oex-btn"
+        aria-label="Skift rute (bil / gå)"
+        title="Skift rute (bil / gå)">
+  <!-- default = bil -->
+  <svg class="map-icon" viewBox="0 0 24 24">
+    <path d="M3 13l2-5h14l2 5"></path>
+    <circle cx="7" cy="17" r="2"></circle>
+    <circle cx="17" cy="17" r="2"></circle>
+  </svg>
+</button>
             <button id="viewToggleBtn" class="oex-btn" aria-label="Skift visning" title="Skift visning (Dark / 3D / Virkelighed)">
               <svg class="map-icon" viewBox="0 0 24 24">
                 <path d="M4 6h16M4 12h16M4 18h16M8 3v4M16 3v4M8 9v6M16 9v6M12 15v6" stroke-dasharray="2,2"/>
@@ -147,37 +158,16 @@ svg.map-icon {
             </button>
           </div>
           <div class="actions">
-  <button class="secondary" id="resetBtn" title="Nulstil felter">
-    Nulstil
-  </button>
-
-  <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">
-    Auto-spor: OFF
-  </button>
-
-  <span id="oex-gps-status"
-        class="oex-chip oex-chip-off"
-        aria-live="polite"
-        title="GPS status">
-    <span class="dot" aria-hidden="true"></span>
-    PAUSE
-  </span>
-
-  <button class="secondary" id="shareBtn" title="Del visning">
-    Del
-  </button>
-
-  <!-- ✅ OEX PATCH A: Konflikt-toggle (ENESTE TILFØJELSE) -->
-  <button class="secondary"
-          id="conflictToggleBtn"
-          title="Vis/skjul konflikt-feed">
-    Konflikter: OFF
-  </button>
-</div>
+            <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
+            <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
+            <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
+            <button class="secondary" id="shareBtn" title="Del visning">Del</button>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
-</header>
+  </header>
+
   <div class="map-wrap">
     <div id="map" role="region" aria-label="Kort med to markører (A og B) og rute"></div>
   </div>
@@ -194,36 +184,8 @@ svg.map-icon {
   function setStatusChip(text, live){ const el = document.getElementById('oex-gps-status'); if(!el) return; el.classList.toggle('oex-chip-on', !!live); el.classList.toggle('oex-chip-off', !live); el.innerHTML = '<span class="dot" aria-hidden="true"></span>' + text; }
 
   // ===== Azure Maps setup =====
+  let oexRouteMode = 'car'; // 'car' | 'pedestrian'
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer;
-  // ===== OEX HELPERS: Circle polygon (Azure Maps v3 kompatibel) =====
-function oexCreateCirclePolygon(center, radiusMeters, steps = 64) {
-  const [lng, lat] = center;
-  const coords = [];
-  const earthRadius = 6378137; // meter
-
-  for (let i = 0; i <= steps; i++) {
-    const angle = (i / steps) * 2 * Math.PI;
-    const dx = radiusMeters * Math.cos(angle);
-    const dy = radiusMeters * Math.sin(angle);
-
-    const newLat = lat + (dy / earthRadius) * (180 / Math.PI);
-    const newLng =
-      lng +
-      (dx / earthRadius) * (180 / Math.PI) /
-      Math.cos(lat * Math.PI / 180);
-
-    coords.push([newLng, newLat]);
-  }
-
-  return new atlas.data.Polygon([coords]);
-}
-
-  // ===== OEX PATCH C: KONFLIKT-FEED STATE =====
-let oexConflictSource;
-let oexConflictBufferLayer;
-let oexConflictPointLayer;
-let oexConflictVisible = false;
-let oexConflictTimer = null;
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -376,84 +338,6 @@ let oexConflictTimer = null;
       });
       map.layers.add([bubbleLayer, symbolLayer], "labels");
 
-      // ===== OEX PATCH D: Init KONFLIKT-lag (Azure Maps) =====
-oexConflictSource = new atlas.source.DataSource();
-map.sources.add(oexConflictSource);
-
-// 🔴 Gennemsigtige buffer-zoner (25 km)
-oexConflictBufferLayer = new atlas.layer.PolygonLayer(
-  oexConflictSource,
-  null,
-  {
-    fillColor: "#8b0000",
-    fillOpacity: 0.25
-  }
-);
-
-// ⚫ Sorte prikker (konflikt-events)
-oexConflictPointLayer = new atlas.layer.BubbleLayer(
-  oexConflictSource,
-  null,
-  {
-    radius: 4,
-    color: "#000000",
-    strokeWidth: 0
-  }
-);
-
-// ✅ TEST: manuel konflikt (skal vises med det samme)
-(() => {
-  const lng = 10.2039; // Aarhus
-  const lat = 56.1629;
-
-  const point = new atlas.data.Feature(
-    new atlas.data.Point([lng, lat])
-  );
-
-  const polygon = oexCreateCirclePolygon([lng, lat], 25000);
-  const buffer = new atlas.data.Feature(polygon);
-
-  oexConflictSource.add([buffer, point]);
-
-  map.layers.add([
-    oexConflictBufferLayer,
-    oexConflictPointLayer
-  ]);
-
-  console.log("✅ TEST‑cirkel tegnet");
-})();
-
-// ===== OEX PATCH F: Toggle konflikter (KORREKT PLACERING) =====
-  document.getElementById("conflictToggleBtn")?.addEventListener("click", function () {
-
-    if (!oexConflictSource) {
-      console.warn("OEX: Konflikt-source ikke klar endnu");
-      return;
-    }
-
-    if (!oexConflictVisible) {
-      map.layers.add(
-        [oexConflictBufferLayer, oexConflictPointLayer],
-        "labels"
-      );
-
-      oexStartConflictFeed();
-      this.textContent = "Konflikter: ON";
-      oexConflictVisible = true;
-
-    } else {
-      map.layers.remove(oexConflictPointLayer);
-      map.layers.remove(oexConflictBufferLayer);
-
-      oexStopConflictFeed();
-      this.textContent = "Konflikter: OFF";
-      oexConflictVisible = false;
-    }
-  });
-
-// ❗ Lagene tilføjes IKKE til map her
-// Det sker via toggle i PATCH F
-
       routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
       routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
       map.layers.add(routeLayer, "labels");
@@ -499,6 +383,35 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
           oexSyncUrlFromCamera();
         });
       }
+
+      // ===== Rute-toggle (bil <-> gå) =====
+const routeModeBtn = document.getElementById('routeModeBtn');
+if (routeModeBtn) {
+  routeModeBtn.addEventListener('click', () => {
+
+    // toggle mellem car og pedestrian
+    oexRouteMode = (oexRouteMode === 'car') ? 'pedestrian' : 'car';
+
+    // skift KUN ikon (ingen tekst)
+    routeModeBtn.innerHTML =
+      (oexRouteMode === 'car')
+        ? `
+          <svg class="map-icon" viewBox="0 0 24 24">
+            <path d="M3 13l2-5h14l2 5"></path>
+            <circle cx="7" cy="17" r="2"></circle>
+            <circle cx="17" cy="17" r="2"></circle>
+          </svg>`
+        : `
+          <svg class="map-icon" viewBox="0 0 24 24">
+            <circle cx="12" cy="5" r="2"></circle>
+            <path d="M12 7v5l-3 5"></path>
+            <path d="M12 12l3 5"></path>
+          </svg>`;
+
+    // gen-tegn rute (samme A-B, ny transport)
+    drawRouteIfReady();
+  });
+}
 
       const atBtn = document.getElementById('autotrackBtn');
       if(atBtn){
@@ -583,7 +496,7 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
     try{
       const url = "https://atlas.microsoft.com/route/directions/json"+
         "?api-version=1.0"+
-        "&travelMode=car"+
+        "&travelMode=" + oexRouteMode +
         "&subscription-key="+encodeURIComponent(AZURE_MAPS_KEY)+
         "&query="+encodeURIComponent(`${lat1},${lng1}:${lat2},${lng2}`);
       const res = await fetch(url, { credentials: 'omit' });
@@ -760,74 +673,6 @@ oexConflictPointLayer = new atlas.layer.BubbleLayer(
       }).catch(()=>{});
     }
   }
-  // ===== OEX PATCH E: GDELT FETCH + BUFFER =====
-async function oexLoadConflictFeed(){
-  if (!oexConflictSource) return;
-
-  // Ryd tidligere data
-  oexConflictSource.clear();
-
-  // GDELT GeoJSON – simple konfliktsøgninger
-  const query = encodeURIComponent(
-  "conflict OR explosion OR fighting OR shelling OR war OR casualties"
-);
-
-const url =
-  "https://api.allorigins.win/raw?url=" +
-  encodeURIComponent(
-    "https://api.gdeltproject.org/api/v2/geo/query" +
-    "?query=" + query +
-    "&timespan=3d" +
-    "&mode=geojson"
-  );
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-
-    if (!data || !Array.isArray(data.features)) return;
-
-    data.features.forEach(f => {
-      if (!f.geometry || f.geometry.type !== "Point") return;
-
-      const [lng, lat] = f.geometry.coordinates;
-
-      // ⚫ Punkt (event)
-      const pointFeature = new atlas.data.Feature(
-        new atlas.data.Point([lng, lat])
-      );
-
-      // 🔴 Buffer (25 km)
-      const bufferPolygon = atlas.math.getCirclePolygon(
-        [lng, lat],
-        25000, // meter
-        36     // segmenter (glathed)
-      );
-
-      const bufferFeature = new atlas.data.Feature(bufferPolygon);
-
-      // Tilføj begge til datasourcen
-      oexConflictSource.add([bufferFeature, pointFeature]);
-    });
-
-  } catch (e) {
-    console.warn("OEX PATCH E: Konflikt-feed fejl", e);
-  }
-}
-
-// Auto-refresh helpers (bruges i PATCH F)
-function oexStartConflictFeed(){
-  oexLoadConflictFeed();
-  oexConflictTimer = setInterval(oexLoadConflictFeed, 30 * 60 * 1000);
-}
-
-function oexStopConflictFeed(){
-  if (oexConflictTimer){
-    clearInterval(oexConflictTimer);
-    oexConflictTimer = null;
-  }
-}
-
 
   // Boot
   window.addEventListener("DOMContentLoaded", initMap);
