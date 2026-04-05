@@ -145,7 +145,13 @@ svg.map-icon {
                 <circle cx="12" cy="12" r="3"/>
               </svg>
             </button>
-            <button class="oex-btn" id="travelModeBtn" title="Skift mellem bilrute og gårute">BIL</button>
+            <button class="oex-btn" id="travelModeBtn" title="Skift mellem bilrute og gårute">
+              <svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="9" width="20" height="9" rx="2"/>
+                <path d="M5 9l2-4h10l2 4"/>
+                <circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>
+              </svg>
+            </button>
           </div>
           <div class="actions">
             <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
@@ -387,9 +393,11 @@ svg.map-icon {
 
       const travelModeBtn = document.getElementById('travelModeBtn');
       if(travelModeBtn){
+        const carIcon = '<svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="9" width="20" height="9" rx="2"/><path d="M5 9l2-4h10l2 4"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>';
+        const pedestrianIcon = '<svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><path d="M10 8l-2 6h8l-2-6"/><path d="M8 14l-1 6M16 14l1 6M9 14l3 3 3-3"/></svg>';
         travelModeBtn.addEventListener('click', ()=>{
           currentTravelMode = (currentTravelMode === 'car') ? 'pedestrian' : 'car';
-          travelModeBtn.textContent = currentTravelMode === 'car' ? 'BIL' : 'GÅ';
+          travelModeBtn.innerHTML = currentTravelMode === 'car' ? carIcon : pedestrianIcon;
           drawRouteIfReady();
         });
       }
