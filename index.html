@@ -475,7 +475,7 @@ if (routeModeBtn) {
     });
     if (newFeatures.length>0) { datasource.add(newFeatures); }
 
-    if (!suppressRoute){ await drawRouteIfReady(); }
+    await drawRouteIfReady();
 
     if (!keepZoom) {
       const all = datasource.toJson(); const feats = (all && all.features) ? all.features : [];
