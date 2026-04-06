@@ -138,7 +138,6 @@ svg.map-icon {
             <button id="oex-zoom-in" class="oex-btn" aria-label="Zoom ind" title="Zoom ind (+)">+</button>
             <button id="oex-zoom-out" class="oex-btn" aria-label="Zoom ud" title="Zoom ud (–)">–</button>
             <button id="oex-mypos" class="oex-btn" aria-label="Min position" title="Min position">•</button>
-            <button id="applyBtn" class="oex-btn" aria-label="Opdater kort" title="Opdater kort">↻</button>
             <button id="viewToggleBtn" class="oex-btn" aria-label="Skift visning" title="Skift visning (Dark / 3D / Virkelighed)">
               <svg class="map-icon" viewBox="0 0 24 24">
                 <path d="M4 6h16M4 12h16M4 18h16M8 3v4M16 3v4M8 9v6M16 9v6M12 15v6" stroke-dasharray="2,2"/>
@@ -343,7 +342,6 @@ svg.map-icon {
       try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }
       try{ map.controls.add(new atlas.control.PitchControl(), { position: 'top-right' }); }catch(e){ console.warn('PitchControl add fail', e); }
 
-      document.getElementById("applyBtn").addEventListener("click", () => updateMapFromForm(false));
       const oexMyBtn = document.getElementById("oex-mypos"); if (oexMyBtn) oexMyBtn.addEventListener("click", oexGetMyPosition);
       document.getElementById("resetBtn").addEventListener("click", resetOptional);
       setupPressAndHold("#oex-zoom-in", +0.1); setupPressAndHold("#oex-zoom-out", -0.1);
