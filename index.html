@@ -8,6 +8,7 @@
   <!-- Azure Maps Web SDK v3 -->
   <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css"/>
   <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
+  <meta name="azure-maps-key" content="[REDACTED]"/>
 
   <!-- OEX BRANDING -->
   <meta name="color-scheme" content="dark"/>
@@ -169,7 +170,7 @@ svg.map-icon {
 
   <script>
   // ===== Konfiguration =====
-  const AZURE_MAPS_KEY = "D9dGgfb9BY3umCaFfsewjziUirXEz50b9Lhqszcrrq5jc0KiMYSuJQQJ99CBACi5YpzFQJVFAAAgAZMP1WG9";
+  const AZURE_MAPS_KEY = (document.querySelector('meta[name="azure-maps-key"]') || {}).content || '';
   const OEX_BLUE = "#00B0F8";
 
   // ===== Utils (validering/guards) =====
@@ -398,7 +399,7 @@ svg.map-icon {
         travelModeBtn.addEventListener('click', ()=>{
           currentTravelMode = (currentTravelMode === 'car') ? 'pedestrian' : 'car';
           travelModeBtn.innerHTML = currentTravelMode === 'car' ? carIcon : pedestrianIcon;
-          drawRouteIfReady();
+          updateMapFromForm(false);
         });
       }
 
