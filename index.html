@@ -8,6 +8,9 @@
   <!-- Azure Maps Web SDK v3 -->
   <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css"/>
   <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
+
+  <!-- OEX Live Positions Overlay (additive, non-breaking) -->
+  <script src="oex-live-overlay.js"></script>
   <meta name="azure-maps-key" content="D9dGgfb9BY3umCaFfsewjziUirXEz50b9Lhqszcrrq5jc0KiMYSuJQQJ99CBACi5YpzFQJVFAAAgAZMP1WG9"/>
 
   <!-- OEX BRANDING -->
@@ -419,6 +422,11 @@ svg.map-icon {
       map.events.add('moveend', _oexSync);
       map.events.add('pitchchanged', _oexSync);
       map.events.add('rotateend', _oexSync);
+
+      // --- OEX Live Positions Overlay (additive) ---
+      if (typeof initOexLiveOverlay === 'function') {
+        initOexLiveOverlay(map);
+      }
     });
   }
 
