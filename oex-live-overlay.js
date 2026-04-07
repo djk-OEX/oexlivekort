@@ -85,12 +85,34 @@ function initOexLiveOverlay(map) {
 
   // Fetch immediately, then every 60 seconds.
   refreshLivePositions();
-  const oexLiveIntervalId = setInterval(refreshLivePositions, 60_000);
+  let oexLiveIntervalId = setInterval(refreshLivePositions, 60_000);
 
-  // Return cleanup function in case the overlay needs to be removed later.
-  return function destroyOexLiveOverlay() {
+  // Visibility state — starts visible.
+  let _visible = true;
+
+  function setVisible(on) {
+    _visible = !!on;
+    map.layers.setOptions(oexLiveLayer, { visible: _visible });
+    if (_visible) {
+      // Resume polling: fetch now and restart interval.
+      if (!oexLiveIntervalId) {
+        refreshLivePositions();
+        oexLiveIntervalId = setInterval(refreshLivePositions, 60_000);
+      }
+    } else {
+      // Pause polling and clear stale markers.
+      clearInterval(oexLiveIntervalId);
+      oexLiveIntervalId = null;
+      oexLiveDataSource.clear();
+    }
+  }
+
+  function destroy() {
     clearInterval(oexLiveIntervalId);
+    oexLiveIntervalId = null;
     map.layers.remove('oex-live-layer');
     map.sources.remove(oexLiveDataSource);
-  };
+  }
+
+  return { setVisible, destroy };
 }
