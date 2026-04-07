@@ -156,7 +156,7 @@ svg.map-icon {
                 <path d="M9 3v15M15 6v15"/>
               </svg>
             </button>
-            <button class="oex-btn oex-chip-on" id="oexLiveToggleBtn" aria-label="Live positioner til/fra" title="Live positioner til/fra" aria-pressed="true">
+            <button class="oex-btn" id="oexLiveToggleBtn" aria-label="Live positioner til/fra" title="Live positioner til/fra" aria-pressed="false">
               <svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 2C8.686 2 6 4.686 6 8c0 5.25 6 13 6 13s6-7.75 6-13c0-3.314-2.686-6-6-6z"/>
                 <circle cx="12" cy="8" r="2.5"/>
@@ -434,7 +434,8 @@ svg.map-icon {
         const oexLiveOverlay = initOexLiveOverlay(map);
         const oexLiveToggleBtn = document.getElementById('oexLiveToggleBtn');
         if (oexLiveToggleBtn && oexLiveOverlay) {
-          let _liveOn = true;
+          let _liveOn = false;
+          oexLiveToggleBtn.style.opacity = '0.45';
           oexLiveToggleBtn.addEventListener('click', () => {
             _liveOn = !_liveOn;
             oexLiveOverlay.setVisible(_liveOn);
