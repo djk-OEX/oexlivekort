@@ -27,8 +27,9 @@ function initOexLiveOverlay(map, opts) {
   // Added without a 'before' id so it appears on top of existing layers.
   const oexLiveLayer = new atlas.layer.SymbolLayer(oexLiveDataSource, 'oex-live-layer', {
     iconOptions: {
-      // Use the built-in pin icon; tint it with OEX blue.
-      image: 'pin-round-blue',
+      // Use a guaranteed built-in Azure Maps icon to avoid engine errors
+      // caused by missing icon sprites (pin-round-blue is not a built-in icon).
+      image: 'marker-blue',
       size: 1,
       allowOverlap: true,
       ignorePlacement: true
@@ -63,10 +64,20 @@ function initOexLiveOverlay(map, opts) {
         return false;
       }
       const data = await res.json();
+
       if (!Array.isArray(data)) {
         console.warn('[OEX Live] Unexpected response format (expected array):', data);
         if (onStatus) onStatus('error', 'bad_response');
         return false;
+      }
+
+      // Guard: return early if the API response is empty to prevent symbol
+      // layout from running against an empty state (avoids engine null errors).
+      if (data.length === 0) {
+        console.log('[OEX Live] No positions yet');
+        oexLiveDataSource.clear();
+        if (onStatus) onStatus('ok', 0);
+        return true;
       }
 
       // Clear existing live markers before repopulating.
