@@ -440,7 +440,7 @@ svg.map-icon {
         const oexLiveToggleBtn = document.getElementById('oexLiveToggleBtn');
         let _liveOn = false;
 
-        const oexLiveOverlay = initOexLiveOverlay(map, {
+        window.oexLive = initOexLiveOverlay(map, {
           onStatus: (status, detail) => {
             if (!oexLiveToggleBtn) return;
             if (status === 'error') {
@@ -463,11 +463,18 @@ svg.map-icon {
           }
         });
 
-        if (oexLiveToggleBtn && oexLiveOverlay) {
-          oexLiveToggleBtn.style.opacity = '0.45';
+        if (window.oexLive) {
+          window.oexLive.setVisible(true);
+          _liveOn = true;
+        }
+
+        if (oexLiveToggleBtn && window.oexLive) {
+          oexLiveToggleBtn.style.opacity = '';
+          oexLiveToggleBtn.setAttribute('aria-pressed', 'true');
+          oexLiveToggleBtn.classList.add('oex-chip-on');
           oexLiveToggleBtn.addEventListener('click', () => {
             _liveOn = !_liveOn;
-            oexLiveOverlay.setVisible(_liveOn);
+            window.oexLive.setVisible(_liveOn);
             oexLiveToggleBtn.setAttribute('aria-pressed', String(_liveOn));
             oexLiveToggleBtn.classList.toggle('oex-chip-on', _liveOn);
             oexLiveToggleBtn.style.opacity = _liveOn ? '' : '0.45';
