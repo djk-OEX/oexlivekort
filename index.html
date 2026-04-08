@@ -431,6 +431,11 @@ svg.map-icon {
       map.events.add('rotateend', _oexSync);
 
       // --- OEX Live Positions Overlay (additive) ---
+      // IMPORTANT: initOexLiveOverlay MUST be called inside the map 'ready'
+      // handler. Adding a DataSource or Layer before 'ready' fires leaves the
+      // map's internal state as null, causing engine errors such as:
+      // "Expected value to be of type number, but found null instead"
+      // (ue.performSymbolLayout / parse → evaluate → loadTile).
       if (typeof initOexLiveOverlay === 'function') {
         const oexLiveToggleBtn = document.getElementById('oexLiveToggleBtn');
         let _liveOn = false;
