@@ -149,7 +149,18 @@ function initOexLiveOverlay(map, opts) {
 // Usage: debugFetchOexPositions()
 window.debugFetchOexPositions = async function () {
   const res = await fetch('/api/oex/positions');
-  const data = await res.json();
-  console.log(data);
-  return data;
+  const text = await res.text();
+
+  console.log('STATUS:', res.status);
+  console.log('RAW RESPONSE:', text);
+
+  try {
+    if (text) {
+      return JSON.parse(text);
+    }
+    return [];
+  } catch (e) {
+    console.error('JSON parse failed', e);
+    return null;
+  }
 };
