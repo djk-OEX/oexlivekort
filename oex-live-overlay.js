@@ -133,3 +133,12 @@ function initOexLiveOverlay(map, opts) {
 
   return { setVisible, destroy };
 }
+
+// --- Debug helper: callable from the browser console ---
+// Usage: debugFetchOexPositions()
+window.debugFetchOexPositions = async function () {
+  const res = await fetch('/api/oex/positions');
+  const data = await res.json();
+  console.log(data);
+  return data;
+};
