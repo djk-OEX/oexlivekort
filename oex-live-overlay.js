@@ -1,7 +1,7 @@
 // ============================================================
 // OEX LIVE POSITIONS OVERLAY
 // Additive, non-breaking overlay for the existing atlas.Map.
-// All logic is self-contained in initOexLiveOverlay(map).
+// All logic is self-contained in initOexLiveOverlay(map, opts).
 // To remove: delete this file and the two lines that reference
 // it in index.html (script tag + initOexLiveOverlay call).
 // ============================================================
@@ -12,8 +12,13 @@
  * Refreshes positions every 60 seconds from /api/oex/positions.
  *
  * @param {atlas.Map} map - The existing Azure Maps instance.
+ * @param {object}   [opts]
+ * @param {function} [opts.onStatus] - Called with ('ok', count) on success or
+ *                                     ('error', httpStatusOrReason) on failure.
  */
-function initOexLiveOverlay(map) {
+function initOexLiveOverlay(map, opts) {
+  const onStatus = (opts && typeof opts.onStatus === 'function') ? opts.onStatus : null;
+
   // --- DataSource for live OEX positions (separate from existing sources) ---
   const oexLiveDataSource = new atlas.source.DataSource();
   map.sources.add(oexLiveDataSource);
@@ -42,18 +47,26 @@ function initOexLiveOverlay(map) {
   });
   map.layers.add(oexLiveLayer);
 
+  // Visibility state — starts hidden; user must press the toggle to activate.
+  let _visible = false;
+  map.layers.setOptions(oexLiveLayer, { visible: false });
+  let oexLiveIntervalId = null;
+
   // --- Fetch and repopulate live positions ---
+  // Returns true on success, false on any error.
   async function refreshLivePositions() {
     try {
       const res = await fetch('/api/oex/positions');
       if (!res.ok) {
         console.warn('[OEX Live] /api/oex/positions returned HTTP', res.status);
-        return;
+        if (onStatus) onStatus('error', res.status);
+        return false;
       }
       const data = await res.json();
       if (!Array.isArray(data)) {
         console.warn('[OEX Live] Unexpected response format (expected array):', data);
-        return;
+        if (onStatus) onStatus('error', 'bad_response');
+        return false;
       }
 
       // Clear existing live markers before repopulating.
@@ -78,30 +91,36 @@ function initOexLiveOverlay(map) {
       if (features.length > 0) {
         oexLiveDataSource.add(features);
       }
+
+      if (onStatus) onStatus('ok', features.length);
+      return true;
     } catch (err) {
       console.warn('[OEX Live] Failed to refresh positions:', err);
+      if (onStatus) onStatus('error', 'network');
+      return false;
     }
   }
 
-  // Visibility state — starts hidden; user must press the toggle to activate.
-  let _visible = false;
-  map.layers.setOptions(oexLiveLayer, { visible: false });
-  let oexLiveIntervalId = null;
-
   function setVisible(on) {
     _visible = !!on;
-    map.layers.setOptions(oexLiveLayer, { visible: _visible });
-    if (_visible) {
-      // Resume polling: fetch now and restart interval.
-      if (!oexLiveIntervalId) {
-        refreshLivePositions();
-        oexLiveIntervalId = setInterval(refreshLivePositions, 60_000);
-      }
-    } else {
-      // Pause polling and clear stale markers.
+    if (!_visible) {
+      // Hide immediately and stop polling.
+      map.layers.setOptions(oexLiveLayer, { visible: false });
       clearInterval(oexLiveIntervalId);
       oexLiveIntervalId = null;
       oexLiveDataSource.clear();
+      return;
+    }
+
+    // Turning on: fetch first, then reveal the layer only on success.
+    // This prevents showing an empty/broken layer when the API is down.
+    if (!oexLiveIntervalId) {
+      refreshLivePositions().then(ok => {
+        if (ok && _visible) {
+          map.layers.setOptions(oexLiveLayer, { visible: true });
+        }
+      });
+      oexLiveIntervalId = setInterval(refreshLivePositions, 60_000);
     }
   }
 
