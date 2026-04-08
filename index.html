@@ -11,7 +11,7 @@
 
   <!-- OEX Live Positions Overlay (additive, non-breaking) -->
   <script src="oex-live-overlay.js"></script>
-  <meta name="azure-maps-key" content="D9dGgfb9BY3umCaFfsewjziUirXEz50b9Lhqszcrrq5jc0KiMYSuJQQJ99CBACi5YpzFQJVFAAAgAZMP1WG9"/>
+  <!-- Azure Maps key is loaded at runtime from /api/mapkey to keep it out of source control. -->
 
   <!-- OEX BRANDING -->
   <meta name="color-scheme" content="dark"/>
@@ -187,7 +187,8 @@ svg.map-icon {
 
   <script>
   // ===== Konfiguration =====
-  const AZURE_MAPS_KEY = (document.querySelector('meta[name="azure-maps-key"]') || {}).content || '';
+  // AZURE_MAPS_KEY is populated at boot time by fetchMapKey() below.
+  let AZURE_MAPS_KEY = '';
   const OEX_BLUE = "#00B0F8";
 
   // ===== Utils (validering/guards) =====
@@ -431,10 +432,33 @@ svg.map-icon {
 
       // --- OEX Live Positions Overlay (additive) ---
       if (typeof initOexLiveOverlay === 'function') {
-        const oexLiveOverlay = initOexLiveOverlay(map);
         const oexLiveToggleBtn = document.getElementById('oexLiveToggleBtn');
+        let _liveOn = false;
+
+        const oexLiveOverlay = initOexLiveOverlay(map, {
+          onStatus: (status, detail) => {
+            if (!oexLiveToggleBtn) return;
+            if (status === 'error') {
+              const reason =
+                detail === 'network'       ? 'Netværksfejl – tjek forbindelsen'     :
+                detail === 'bad_response'  ? 'Uventet svar fra serveren'            :
+                detail === 503             ? 'Tjeneste ikke konfigureret (503)'      :
+                detail === 502             ? 'Serverfejl (502)'                      :
+                                             `Fejl (HTTP ${detail})`;
+              oexLiveToggleBtn.title = `Live positioner – ${reason}`;
+              // Flash the button amber to signal the error without disabling it.
+              oexLiveToggleBtn.style.outline = '2px solid #FFA500';
+              setTimeout(() => { oexLiveToggleBtn.style.outline = ''; }, 3000);
+            } else {
+              // status === 'ok'
+              const label = detail === 1 ? '1 aktiv' : `${detail} aktive`;
+              oexLiveToggleBtn.title = `Live positioner til/fra (${label})`;
+              oexLiveToggleBtn.style.outline = '';
+            }
+          }
+        });
+
         if (oexLiveToggleBtn && oexLiveOverlay) {
-          let _liveOn = false;
           oexLiveToggleBtn.style.opacity = '0.45';
           oexLiveToggleBtn.addEventListener('click', () => {
             _liveOn = !_liveOn;
@@ -442,6 +466,7 @@ svg.map-icon {
             oexLiveToggleBtn.setAttribute('aria-pressed', String(_liveOn));
             oexLiveToggleBtn.classList.toggle('oex-chip-on', _liveOn);
             oexLiveToggleBtn.style.opacity = _liveOn ? '' : '0.45';
+            if (!_liveOn) oexLiveToggleBtn.title = 'Live positioner til/fra';
           });
         }
       }
@@ -728,8 +753,31 @@ svg.map-icon {
     }
   }
 
-  // Boot
-  window.addEventListener("DOMContentLoaded", initMap);
+  // Boot — fetch the Azure Maps key from the backend API before initialising the map.
+  async function fetchMapKey() {
+    try {
+      const res = await fetch('/api/mapkey');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data.key === 'string' && data.key.trim()) {
+          AZURE_MAPS_KEY = data.key.trim();
+          return;
+        }
+        console.warn('[OEX] /api/mapkey response did not contain a key. Map may not load.');
+      } else {
+        console.warn('[OEX] /api/mapkey returned HTTP', res.status, '. Map may not load.');
+      }
+    } catch (err) {
+      console.warn('[OEX] Failed to fetch map key:', err);
+    }
+  }
+
+  async function boot() {
+    await fetchMapKey();
+    initMap();
+  }
+
+  window.addEventListener("DOMContentLoaded", boot);
   </script>
 </body>
 </html>

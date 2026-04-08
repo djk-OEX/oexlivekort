@@ -1,75 +1,83 @@
 // ============================================================
 // OEX LIVE POSITIONS – Azure Functions v4 (Node.js)
-// Route: GET /api/oex/positions
 //
-// Reads live OEX positions from Azure Table Storage and returns
-// a JSON array of:
-//   [{ user: string, lat: number, lon: number, lastSeen: string|null }, …]
+// GET  /api/oex/positions
+//   Returns all current live positions as a JSON array:
+//   [{ user: string, lat: number, lon: number, lastSeen: string }, …]
 //
-// Required environment variable:
-//   POSITIONS_CONNECTION_STRING – Azure Storage connection string
-//   POSITIONS_TABLE_NAME        – Table name (default: "OexPositions")
+// POST /api/oex/positions
+//   Upserts a single live position.  Body (JSON):
+//   { user: string, lat: number, lon: number }
+//
+// Positions are kept in-memory (a Map keyed by user name).
+// No external storage is required.
 // ============================================================
 
 'use strict';
 
 const { app } = require('@azure/functions');
-const { TableClient } = require('@azure/data-tables');
 
-const TABLE_NAME = process.env.POSITIONS_TABLE_NAME || 'OexPositions';
+// In-memory store: user → { user, lat, lon, lastSeen }
+const positions = new Map();
 
+// ── GET /api/oex/positions ────────────────────────────────────────────────────
 app.http('oexPositions', {
   methods: ['GET'],
   authLevel: 'anonymous',
   route: 'oex/positions',
-  handler: async (request, context) => {
-    const connectionString = process.env.POSITIONS_CONNECTION_STRING;
-    if (!connectionString) {
-      context.error('[OEX Positions] POSITIONS_CONNECTION_STRING is not set.');
-      return {
-        status: 503,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'Service not configured.' })
-      };
-    }
+  handler: async () => {
+    return {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Array.from(positions.values()))
+    };
+  }
+});
 
+// ── POST /api/oex/positions ───────────────────────────────────────────────────
+app.http('oexPositionsIngest', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'oex/positions',
+  handler: async (request) => {
+    let body;
     try {
-      const client = TableClient.fromConnectionString(connectionString, TABLE_NAME);
-      const positions = [];
-
-      for await (const entity of client.listEntities()) {
-        const lat = Number(entity.lat);
-        const lon = Number(entity.lon);
-
-        // Skip entries that lack a valid user name or coordinates.
-        if (
-          typeof entity.user !== 'string' || entity.user.trim().length === 0 ||
-          !Number.isFinite(lat) || lat < -90 || lat > 90 ||
-          !Number.isFinite(lon) || lon < -180 || lon > 180
-        ) {
-          continue;
-        }
-
-        positions.push({
-          user: entity.user,
-          lat,
-          lon,
-          lastSeen: entity.lastSeen || null
-        });
-      }
-
+      body = await request.json();
+    } catch {
       return {
-        status: 200,
+        status: 400,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(positions)
-      };
-    } catch (err) {
-      context.error('[OEX Positions] Failed to read from Table Storage:', err);
-      return {
-        status: 502,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'Failed to fetch positions.' })
+        body: JSON.stringify({ error: 'Request body must be valid JSON.' })
       };
     }
+
+    const { user, lat, lon } = body || {};
+    const latNum = Number(lat);
+    const lonNum = Number(lon);
+
+    if (
+      typeof user !== 'string' || user.trim().length === 0 ||
+      !Number.isFinite(latNum) || latNum < -90 || latNum > 90 ||
+      !Number.isFinite(lonNum) || lonNum < -180 || lonNum > 180
+    ) {
+      return {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Missing or invalid fields: user (string), lat (number), lon (number).' })
+      };
+    }
+
+    positions.set(user.trim(), {
+      user: user.trim(),
+      lat: latNum,
+      lon: lonNum,
+      lastSeen: new Date().toISOString()
+    });
+
+    return {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ok: true })
+    };
   }
 });
