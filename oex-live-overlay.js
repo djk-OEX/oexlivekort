@@ -85,18 +85,18 @@ function initOexLiveOverlay(map, opts) {
 
       const features = data
         .filter(entry => {
-          const lat = Number(entry.Lat);
-          const lon = Number(entry.Lon);
+          const lat = Number(entry.lat);
+          const lon = Number(entry.lon);
           return (
-            typeof entry.User === 'string' &&
-            entry.User.length > 0 &&
+            typeof entry.user === 'string' &&
+            entry.user.length > 0 &&
             Number.isFinite(lat) && lat >= -90 && lat <= 90 &&
             Number.isFinite(lon) && lon >= -180 && lon <= 180
           );
         })
         .map(entry => new atlas.data.Feature(
-          new atlas.data.Point([Number(entry.Lon), Number(entry.Lat)]),
-          { user: entry.User, lastSeen: entry.LastSeen || null }
+          new atlas.data.Point([Number(entry.lon), Number(entry.lat)]),
+          { user: entry.user, lastSeen: entry.lastSeen || null }
         ));
 
       if (features.length > 0) {
