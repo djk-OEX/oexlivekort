@@ -49,7 +49,7 @@ function initOexLiveOverlay(map, opts) {
 
   // Visibility state — starts hidden; user must press the toggle to activate.
   let _visible = false;
-  map.layers.setOptions(oexLiveLayer, { visible: false });
+  oexLiveLayer.setOptions({ visible: false });
   let oexLiveIntervalId = null;
 
   // --- Fetch and repopulate live positions ---
@@ -105,7 +105,7 @@ function initOexLiveOverlay(map, opts) {
     _visible = !!on;
     if (!_visible) {
       // Hide immediately and stop polling.
-      map.layers.setOptions(oexLiveLayer, { visible: false });
+      oexLiveLayer.setOptions({ visible: false });
       clearInterval(oexLiveIntervalId);
       oexLiveIntervalId = null;
       oexLiveDataSource.clear();
@@ -117,7 +117,7 @@ function initOexLiveOverlay(map, opts) {
     if (!oexLiveIntervalId) {
       refreshLivePositions().then(ok => {
         if (ok && _visible) {
-          map.layers.setOptions(oexLiveLayer, { visible: true });
+          oexLiveLayer.setOptions({ visible: true });
         }
       });
       oexLiveIntervalId = setInterval(refreshLivePositions, 60_000);
