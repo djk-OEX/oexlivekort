@@ -83,12 +83,10 @@ function initOexLiveOverlay(map) {
     }
   }
 
-  // Fetch immediately, then every 60 seconds.
-  refreshLivePositions();
-  let oexLiveIntervalId = setInterval(refreshLivePositions, 60_000);
-
-  // Visibility state — starts visible.
-  let _visible = true;
+  // Visibility state — starts hidden; user must press the toggle to activate.
+  let _visible = false;
+  map.layers.setOptions(oexLiveLayer, { visible: false });
+  let oexLiveIntervalId = null;
 
   function setVisible(on) {
     _visible = !!on;
