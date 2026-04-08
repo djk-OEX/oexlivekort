@@ -1,0 +1,16 @@
+{
+  "name": "oexlivekort-api",
+  "version": "1.0.0",
+  "description": "Azure Functions API for OEX live positions",
+  "main": "src/functions/oexPositions.js",
+  "scripts": {
+    "start": "func start"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.2",
+    "@azure/functions": "^4.12.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
