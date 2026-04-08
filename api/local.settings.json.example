@@ -3,6 +3,7 @@
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "node",
-    "AZURE_MAPS_KEY": "<your-azure-maps-subscription-key>"
+    "AZURE_MAPS_KEY": "<your-azure-maps-subscription-key>",
+    "POSITIONS_CONNECTION_STRING": "<connection-string-for-the-OexPositions-Azure-Table-Storage-account>"
   }
 }
