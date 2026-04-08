@@ -9,11 +9,12 @@
 //
 // GET  /api/oex/positions   – anonymous
 //   Returns all positions:
-//   [{ User, Lat, Lon, LastSeen }, …]
+//   [{ user, lat, lon, lastSeen }, …]
 //
 // POST /api/oex/positions   – function key required
 //   Upserts a single position.  Body (JSON, case-insensitive):
-//   { User, Lat, Lon, Timestamp? }
+//   { user, lat, lon, timestamp? }   (also accepts PascalCase for backwards compatibility)
+//   timestamp (the position fix time) is stored and returned as lastSeen.
 //   Timestamp defaults to server time when omitted.
 //   Returns 200 OK on success.
 //
@@ -48,10 +49,10 @@ app.http('oexPositions', {
       queryOptions: { filter: odata`PartitionKey eq ${PARTITION_KEY}` }
     })) {
       results.push({
-        User: entity.rowKey,
-        Lat: entity.Lat,
-        Lon: entity.Lon,
-        LastSeen: entity.LastSeen
+        user: entity.rowKey,
+        lat: entity.lat ?? entity.Lat,
+        lon: entity.lon ?? entity.Lon,
+        lastSeen: entity.lastSeen ?? entity.LastSeen
       });
     }
     return {
@@ -100,9 +101,9 @@ app.http('oexPositionsIngest', {
       {
         partitionKey: PARTITION_KEY,
         rowKey: user,
-        Lat: lat,
-        Lon: lon,
-        LastSeen: timestamp
+        lat: lat,
+        lon: lon,
+        lastSeen: timestamp
       },
       'Replace'
     );
