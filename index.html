@@ -373,7 +373,7 @@ svg.map-icon {
       });
 
       [1,2].forEach(async (idx) => {
-        const saved = localStorage.getItem("oex_addr"+idx);
+        let saved = null; try { saved = localStorage.getItem("oex_addr"+idx); } catch(e) {}
         if (saved && saved.trim()) { document.getElementById("addr"+idx).value = saved.trim(); fetchSuggestions(idx, saved.trim(), true); }
       });
 
@@ -507,7 +507,7 @@ svg.map-icon {
     }catch(err){ console.error("Azure Maps search fejl:", err); setHint(idx, "Fejl ved søgning (tjek key/CORS)."); showSuggestions(idx, []); }
   }
   function showSuggestions(idx, list){ const box = document.getElementById("sug"+idx); box.innerHTML = ""; if (!list || !list.length) { box.style.display = "none"; return; } list.forEach(item => { const div = document.createElement("div"); div.className = "suggestion"; div.textContent = item.title; div.addEventListener("click", () => { document.getElementById("addr"+idx).value = item.title; selectSuggestion(idx, { position:{ lat:item.lat, lon:item.lon }, address:{ freeformAddress:item.title } }); box.style.display = "none"; }); box.appendChild(div); }); box.style.display = "block"; }
-  function selectSuggestion(idx, result){ const lat = result.position.lat, lng = result.position.lon; if (!isValidLatLon(lat,lng)) return; document.getElementById("lat"+idx).value = lat.toFixed(6); document.getElementById("lng"+idx).value = lng.toFixed(6); const free = (result.address && result.address.freeformAddress) ? result.address.freeformAddress : (document.getElementById("addr"+idx).value || "").trim(); localStorage.setItem("oex_addr"+idx, free); const nameEl = document.getElementById("name"+idx); if (!nameEl.value.trim()) { nameEl.value = (idx===1?"":""); } updateMapFromForm(false); }
+  function selectSuggestion(idx, result){ const lat = result.position.lat, lng = result.position.lon; if (!isValidLatLon(lat,lng)) return; document.getElementById("lat"+idx).value = lat.toFixed(6); document.getElementById("lng"+idx).value = lng.toFixed(6); const free = (result.address && result.address.freeformAddress) ? result.address.freeformAddress : (document.getElementById("addr"+idx).value || "").trim(); try { localStorage.setItem("oex_addr"+idx, free); } catch(e) {} const nameEl = document.getElementById("name"+idx); if (!nameEl.value.trim()) { nameEl.value = (idx===1?"":""); } updateMapFromForm(false); }
   function setHint(idx, text){ const h = document.getElementById("hint"+idx); if (h) h.textContent = text || ""; }
   function readNum(id){ const el = document.getElementById(id); if (!el) return NaN; const v = (el.value || '').trim(); if (v === '' || v === '0' || v === '0.0') return NaN; const n = Number(v); if (!Number.isFinite(n) || n === 0) return NaN; return n; }
 
@@ -604,7 +604,7 @@ svg.map-icon {
     }catch(e){ console.error('Azure Maps route fejl:', e); }
   }
 
-  function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); localStorage.removeItem("oex_addr2"); const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; updateMapFromForm(false); }
+  function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; updateMapFromForm(false); }
   function setupPressAndHold(selector, delta){ const btn = document.querySelector(selector); if (!btn) return; let t = null; const step = () => { const cam = map.getCamera(); map.setCamera({ zoom: cam.zoom + delta, animate:true, duration:50 }); }; const start = () => { step(); if (!t) t = setInterval(step, 60); }; const stop = () => { if (t){ clearInterval(t); t = null; } }; btn.addEventListener('mousedown', start); document.addEventListener('mouseup', stop); btn.addEventListener('mouseleave', stop); btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); start(); }, {passive:false}); document.addEventListener('touchend', stop); document.addEventListener('touchcancel', stop); }
 
   // ===== IP FALLBACK =====
