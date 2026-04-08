@@ -23,7 +23,7 @@
 'use strict';
 
 const { app } = require('@azure/functions');
-const { TableClient } = require('@azure/data-tables');
+const { TableClient, odata } = require('@azure/data-tables');
 
 const PARTITION_KEY = 'OEX';
 const TABLE_NAME = 'OexPositions';
@@ -45,7 +45,7 @@ app.http('oexPositions', {
     const client = getTableClient();
     const results = [];
     for await (const entity of client.listEntities({
-      queryOptions: { filter: `PartitionKey eq '${PARTITION_KEY}'` }
+      queryOptions: { filter: odata`PartitionKey eq ${PARTITION_KEY}` }
     })) {
       results.push({
         User: entity.rowKey,
@@ -76,10 +76,14 @@ app.http('oexPositionsIngest', {
     }
 
     // Accept both PascalCase and lowercase field names.
-    const user = (body.User ?? body.user ?? '').toString().trim();
+    const rawUser = body.User ?? body.user;
+    const user = (typeof rawUser === 'string' ? rawUser : '').trim();
     const lat = Number(body.Lat ?? body.lat);
     const lon = Number(body.Lon ?? body.lon);
-    const timestamp = body.Timestamp ?? body.timestamp ?? new Date().toISOString();
+    const rawTimestamp = body.Timestamp ?? body.timestamp;
+    const timestamp = (typeof rawTimestamp === 'string' && rawTimestamp)
+      ? rawTimestamp
+      : new Date().toISOString();
 
     if (!user) {
       return { status: 400, body: 'User is required.' };
