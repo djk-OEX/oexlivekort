@@ -637,9 +637,11 @@ svg.map-icon {
     const now = new Date();
     const parts = (timeStr||'').split(':');
     if (parts.length < 2) return null;
+    const h = parseInt(parts[0],10), m = parseInt(parts[1],10);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
     const dep = new Date(now);
-    dep.setHours(parseInt(parts[0],10), parseInt(parts[1],10), 0, 0);
-    if (dep - now < -60000) dep.setDate(dep.getDate() + 1);
+    dep.setHours(h, m, 0, 0);
+    if (dep < now) dep.setDate(dep.getDate() + 1);
     return Math.round((dep - now) / 60000);
   }
 
