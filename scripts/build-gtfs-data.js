@@ -2,9 +2,11 @@
 /**
  * build-gtfs-data.js
  * ------------------
- * Pre-processer GTFS-data for Danmark til to kompakte JSON-filer:
- *   data/stops.json       – alle busstop: [{id, name, lat, lng}, ...]
- *   data/stop_routes.json – stop_id → ruter: {"851459100": [{"line":"1A","headsigns":["Vanløse"]}, ...], ...}
+ * Pre-processer GTFS-data for Danmark til kompakte JSON-filer:
+ *   data/stops.json            – alle busstop: [{id, name, lat, lng}, ...]
+ *   data/stop_routes.json      – stop_id → ruter: {"851459100": [{"line":"1A","headsigns":["Vanløse"]}, ...], ...}
+ *   data/routes.json           – route_id → short_name: {"102785-12345": "2A", ...}
+ *   data/departures_5min/*.json – 5-min afgangsvinduer: {"stop_id": [{route_id, short_name, arrival, departure}, ...], ...}
  *
  * Brug:
  *   node scripts/build-gtfs-data.js /sti/til/gtfs-mappe
@@ -138,6 +140,11 @@ async function main() {
   const routeMap = {};
   routeRows.forEach(r => { routeMap[r.route_id] = r.route_short_name || r.route_long_name || r.route_id; });
 
+  // Gem route_id → short_name opslag til data/routes.json
+  const routesJsonFile = path.join(outDir, 'routes.json');
+  fs.writeFileSync(routesJsonFile, JSON.stringify(routeMap));
+  console.log(`  → ${Object.keys(routeMap).length} ruter skrevet til ${routesJsonFile}`);
+
   console.log('Behandler trips.txt ...');
   const tripsText = reader.readFile('trips.txt');
   if (!tripsText) { console.warn('trips.txt ikke fundet – stop_routes.json springes over'); return; }
@@ -154,12 +161,16 @@ async function main() {
 
   // Byg stop_id → Set af "routeLine|headsign"
   const stopRoutesMap = {};  // stop_id → Map<line, Set<headsign>>
+  // Byg 5-min afgangsvinduer: slotKey → stop_id → [{route_id, short_name, arrival, departure}]
+  const departureSlots = {};  // e.g. "08_05" → { stop_id: [...] }
 
   const lines = stopTimesText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/^\uFEFF/, ''));
   const colTripId    = headers.indexOf('trip_id');
   const colStopId    = headers.indexOf('stop_id');
   const colSeq       = headers.indexOf('stop_sequence');
+  const colArrival   = headers.indexOf('arrival_time');
+  const colDeparture = headers.indexOf('departure_time');
 
   if (colTripId < 0 || colStopId < 0) {
     console.error('Ukendt stop_times.txt format'); process.exit(1);
@@ -169,7 +180,6 @@ async function main() {
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
-    // Only process stop_sequence=1 to capture route first stop (faster + enough for route listing)
     const vals = parseCSVLine(line);
     const tripId = vals[colTripId];
     const stopId = vals[colStopId];
@@ -180,9 +190,37 @@ async function main() {
     const lineName = routeMap[trip.routeId];
     if (!lineName) continue;
 
-    if (!stopRoutesMap[stopId]) stopRoutesMap[stopId] = {};
-    if (!stopRoutesMap[stopId][lineName]) stopRoutesMap[stopId][lineName] = new Set();
-    if (trip.headsign) stopRoutesMap[stopId][lineName].add(trip.headsign);
+    const seq = colSeq >= 0 ? vals[colSeq] : '';
+
+    // ── stop_routes.json: registrér kun første stop per tur (seq=1) ──
+    if (seq === '1' || seq === '') {
+      if (!stopRoutesMap[stopId]) stopRoutesMap[stopId] = {};
+      if (!stopRoutesMap[stopId][lineName]) stopRoutesMap[stopId][lineName] = new Set();
+      if (trip.headsign) stopRoutesMap[stopId][lineName].add(trip.headsign);
+    }
+
+    // ── departures_5min/: registrér alle afgange med short_name ──
+    const depTime = colDeparture >= 0 ? (vals[colDeparture] || '').trim() : '';
+    const arrTime = colArrival  >= 0 ? (vals[colArrival]  || '').trim() : '';
+    const timeStr = depTime || arrTime;
+    if (timeStr) {
+      // Parse "HH:MM:SS" – GTFS tillader H > 23 for afgange efter midnat
+      const parts = timeStr.split(':');
+      const h = parseInt(parts[0], 10);
+      const m = parseInt(parts[1] || '0', 10);
+      if (!isNaN(h) && !isNaN(m)) {
+        const slotMin = Math.floor(m / 5) * 5;
+        const slotKey = String(h).padStart(2, '0') + '_' + String(slotMin).padStart(2, '0');
+        if (!departureSlots[slotKey]) departureSlots[slotKey] = {};
+        if (!departureSlots[slotKey][stopId]) departureSlots[slotKey][stopId] = [];
+        departureSlots[slotKey][stopId].push({
+          route_id:   trip.routeId,
+          short_name: lineName,
+          arrival:    arrTime,
+          departure:  depTime
+        });
+      }
+    }
 
     processed++;
     if (processed % 500000 === 0) console.log(`  ${processed} linjer behandlet...`);
@@ -200,6 +238,22 @@ async function main() {
   const stopRoutesFile = path.join(outDir, 'stop_routes.json');
   fs.writeFileSync(stopRoutesFile, JSON.stringify(stopRoutesOut));
   console.log(`  → ${Object.keys(stopRoutesOut).length} stop-ruter skrevet til ${stopRoutesFile}`);
+
+  // ── 3. Skriv departures_5min/*.json ─────────────────────────────────────
+  const depOutDir = path.join(outDir, 'departures_5min');
+  fs.mkdirSync(depOutDir, { recursive: true });
+  let slotCount = 0;
+  for (const [slotKey, stopMap] of Object.entries(departureSlots)) {
+    // Sortér afgange inden for hvert stop kronologisk og behold maks 20 per stop
+    const slotOut = {};
+    for (const [stopId, deps] of Object.entries(stopMap)) {
+      deps.sort((a, b) => (a.departure || a.arrival || '').localeCompare(b.departure || b.arrival || ''));
+      slotOut[stopId] = deps.slice(0, 20);
+    }
+    fs.writeFileSync(path.join(depOutDir, slotKey + '.json'), JSON.stringify(slotOut));
+    slotCount++;
+  }
+  console.log(`  → ${slotCount} afgangsvinduer skrevet til ${depOutDir}/`);
   console.log('Færdig!');
 }
 
