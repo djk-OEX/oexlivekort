@@ -613,24 +613,37 @@ svg.map-icon {
     if (panel) panel.remove();
   }
 
-  async function findNearestBusStop(lat, lng){
+  function _haversineDist(lat1, lng1, lat2, lng2){
+    const R = 6371000;
+    const toRad = x => x * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+              Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)*Math.sin(dLng/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  async function findNearestRejseplanenStop(lat, lng, radiusMeters){
+    if (radiusMeters === undefined) radiusMeters = 800;
     try{
-      const url = 'https://atlas.microsoft.com/search/nearby/json'+
-        '?api-version=1.0'+
-        '&categorySet=7521'+
-        '&radius=800'+
-        '&limit=1'+
-        '&subscription-key='+encodeURIComponent(AZURE_MAPS_KEY)+
-        '&lat='+encodeURIComponent(lat)+
-        '&lon='+encodeURIComponent(lng);
+      const coordX = Math.round(lng * 1000000);
+      const coordY = Math.round(lat * 1000000);
+      const url = 'https://xmlopen.rejseplanen.dk/bin/rest.exe/stopsNearby'+
+        '?coordX='+coordX+
+        '&coordY='+coordY+
+        '&maxRadius='+radiusMeters+
+        '&maxNumber=1'+
+        '&format=json';
       const res = await fetch(url, { credentials:'omit' });
       if (!res.ok) throw new Error('HTTP '+res.status);
       const data = await res.json();
-      const r = (data && data.results && data.results[0]) || null;
-      if (!r || !r.position) return null;
-      const name = (r.poi && r.poi.name) ? r.poi.name : ((r.address && r.address.freeformAddress) ? r.address.freeformAddress : 'Busstop');
-      return { name, lat: r.position.lat, lng: r.position.lon, dist: Math.round(r.dist || 0) };
-    }catch(e){ console.warn('findNearestBusStop fejl:', e); return null; }
+      const stops = (data && data.LocationList && data.LocationList.StopLocation) || [];
+      const first = Array.isArray(stops) ? stops[0] : (stops && stops.id ? stops : null);
+      if (!first || !first.id) return null;
+      const stopLat = first.y ? first.y / 1000000 : lat;
+      const stopLng = first.x ? first.x / 1000000 : lng;
+      const dist = Math.round(_haversineDist(lat, lng, stopLat, stopLng));
+      return { id: first.id, name: first.name || 'Busstop', lat: stopLat, lng: stopLng, dist };
+    }catch(e){ console.warn('findNearestRejseplanenStop fejl:', e); return null; }
   }
 
   function minsUntil(timeStr){
@@ -645,17 +658,6 @@ svg.map-icon {
     return Math.round((dep - now) / 60000);
   }
 
-  async function findRejseplanenStopId(stopName){
-    try{
-      const url = 'https://xmlopen.rejseplanen.dk/bin/rest.exe/location?input='+encodeURIComponent(stopName)+'&format=json';
-      const res = await fetch(url, { credentials:'omit' });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const stops = (data && data.LocationList && data.LocationList.StopLocation) || [];
-      const first = Array.isArray(stops) ? stops[0] : stops;
-      return (first && first.id) ? first.id : null;
-    }catch(e){ console.warn('Rejseplanen location fejl:', e); return null; }
-  }
 
   async function fetchNextDepartures(stopId){
     try{
@@ -735,18 +737,13 @@ svg.map-icon {
     if (!hasA) return;
 
     const [stop1, stop2] = await Promise.all([
-      hasA ? findNearestBusStop(lat1, lng1) : Promise.resolve(null),
-      hasB ? findNearestBusStop(lat2, lng2) : Promise.resolve(null)
-    ]);
-
-    const [rpId1, rpId2] = await Promise.all([
-      stop1 ? findRejseplanenStopId(stop1.name) : Promise.resolve(null),
-      stop2 ? findRejseplanenStopId(stop2.name) : Promise.resolve(null)
+      hasA ? findNearestRejseplanenStop(lat1, lng1) : Promise.resolve(null),
+      hasB ? findNearestRejseplanenStop(lat2, lng2) : Promise.resolve(null)
     ]);
 
     const [deps1, deps2] = await Promise.all([
-      rpId1 ? fetchNextDepartures(rpId1) : Promise.resolve([]),
-      rpId2 ? fetchNextDepartures(rpId2) : Promise.resolve([])
+      (stop1 && stop1.id) ? fetchNextDepartures(stop1.id) : Promise.resolve([]),
+      (stop2 && stop2.id) ? fetchNextDepartures(stop2.id) : Promise.resolve([])
     ]);
 
     if (stop1){
