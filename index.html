@@ -734,6 +734,52 @@ svg.map-icon {
     }catch(e){ console.warn('fetchGtfsDepartures fejl:', e); return []; }
   }
 
+  // Generates sorted GTFS slot keys covering one full service day (04:00–27:55),
+  // then wraps back to 04:00. Used to scan for the next available departure.
+  function _getDaySlotKeys(){
+    const keys = [];
+    for (let h = 4; h <= 27; h++){
+      for (let m = 0; m < 60; m += 5){
+        keys.push(String(h).padStart(2,'0') + '_' + String(m).padStart(2,'0'));
+      }
+    }
+    return keys;
+  }
+
+  // Finds the next departure for stopId after the current time window.
+  // Returns { routeShortName: string, nextTime: string } or null if not found.
+  async function fetchNextGtfsDeparture(stopId){
+    try{
+      const routeLookup = await loadGtfsRoutes();
+      const currentKey = _getDepartureSlotKey();
+      const allKeys = _getDaySlotKeys();
+      const currentIdx = allKeys.indexOf(currentKey);
+      // Build search order: slots after current first, then wrap from start of day
+      const ordered = currentIdx >= 0
+        ? [...allKeys.slice(currentIdx + 1), ...allKeys.slice(0, currentIdx + 1)]
+        : allKeys;
+      const MAX_CHECKS = 60; // limit to ~5 hours (60 × 5 min slots) to avoid excessive requests
+      let checked = 0;
+      for (const key of ordered){
+        if (checked >= MAX_CHECKS) break;
+        checked++;
+        try{
+          const r = await fetch('data/departures_5min/' + key + '.json');
+          if (!r.ok) continue;
+          const data = await r.json();
+          const entries = data[stopId];
+          if (entries && entries.length){
+            const e = entries[0];
+            const shortName = e.short_name || routeLookup[e.route_id] || '';
+            const timeStr = (e.departure || e.arrival || '').substring(0, 8);
+            return { routeShortName: shortName, nextTime: timeStr };
+          }
+        }catch(e){ continue; }
+      }
+      return null;
+    }catch(e){ console.warn('fetchNextGtfsDeparture fejl:', e); return null; }
+  }
+
   function _renderRouteList(deps){
     if (!deps || !deps.length) return '<div class="oex-tp-deps"><div class="oex-tp-dep" style="color:#bbbbbb;font-size:12px;">Ingen afgange i dette tidsvindue</div></div>';
     let html = '<div class="oex-tp-deps">';
@@ -747,12 +793,19 @@ svg.map-icon {
     return html;
   }
 
-  function showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2){
+  // nextDep1 / nextDep2 are { routeShortName, nextTime } or null
+  function showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2, nextDep1, nextDep2){
     const existing = document.getElementById('oex-transit-panel');
     if (existing) existing.remove();
     const panel = document.createElement('div');
     panel.id = 'oex-transit-panel';
     let html = '<div class="oex-tp-title">🚌 Nærmeste busstop</div>';
+    // Show route short name when current window has no departures
+    const anyNoDeps = (stop1 && (!deps1 || !deps1.length)) || (stop2 && (!deps2 || !deps2.length));
+    const routeShortName = (nextDep1 && nextDep1.routeShortName) || (nextDep2 && nextDep2.routeShortName) || '';
+    if (anyNoDeps && routeShortName){
+      html += '<div class="oex-tp-routename" style="font-size:18px;font-weight:700;color:#00B0F8;margin:4px 0 6px 0;">'+escapeHtml(routeShortName)+'</div>';
+    }
     if (stop1){
       html += '<div class="oex-tp-row"><strong>Fra A:</strong> '+escapeHtml(stop1.name)+'</div>';
       html += '<div class="oex-tp-row" style="color:#bbbbbb;font-size:12px;">'+stop1.dist+' m til fods</div>';
@@ -767,6 +820,14 @@ svg.map-icon {
         html += _renderRouteList(deps2);
       } else {
         html += '<div class="oex-tp-row" style="color:#bbbbbb;margin-top:6px;">Ingen busstop fundet inden for 800 m fra B</div>';
+      }
+    }
+    // Show next departure time when current window has no departures
+    if (anyNoDeps){
+      const times = [nextDep1 && nextDep1.nextTime, nextDep2 && nextDep2.nextTime].filter(Boolean);
+      if (times.length){
+        times.sort();
+        html += '<div class="oex-tp-row" style="color:#00B0F8;margin-top:8px;font-size:13px;">Næste afgang: '+escapeHtml(times[0])+'</div>';
       }
     }
     panel.innerHTML = html;
@@ -789,6 +850,11 @@ svg.map-icon {
     const [deps1, deps2] = await Promise.all([
       (stop1 && stop1.stop_id) ? fetchGtfsDepartures(stop1.stop_id) : Promise.resolve([]),
       (stop2 && stop2.stop_id) ? fetchGtfsDepartures(stop2.stop_id) : Promise.resolve([])
+    ]);
+
+    const [nextDep1, nextDep2] = await Promise.all([
+      (stop1 && stop1.stop_id && (!deps1 || !deps1.length)) ? fetchNextGtfsDeparture(stop1.stop_id) : Promise.resolve(null),
+      (stop2 && stop2.stop_id && (!deps2 || !deps2.length)) ? fetchNextGtfsDeparture(stop2.stop_id) : Promise.resolve(null)
     ]);
 
     if (stop1){
@@ -839,7 +905,7 @@ svg.map-icon {
       }catch(e){ console.warn('Bus route fejl (forventet):', e); }
     }
 
-    showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2);
+    showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2, nextDep1, nextDep2);
   }
 
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; clearBusDisplay(); updateMapFromForm(false); }
