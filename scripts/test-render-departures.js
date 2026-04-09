@@ -45,7 +45,7 @@ function buildDepartures(entries, routeLookup) {
 }
 
 // ── Test 1: Ingen afgange → vis "Ingen afgange i dette tidsvindue" ───────────
-(function testNoDepatures() {
+(function testNoDepartures() {
   const html = _renderRouteList([]);
   console.assert(html.includes('Ingen afgange i dette tidsvindue'), 'FEJL: Ingen-afgange besked mangler');
   console.assert(!html.includes('oex-tp-dep-line'), 'FEJL: Uventet linje-element');

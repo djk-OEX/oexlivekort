@@ -161,8 +161,8 @@ async function main() {
 
   // Byg stop_id → Set af "routeLine|headsign"
   const stopRoutesMap = {};  // stop_id → Map<line, Set<headsign>>
-  // Byg 5-min afgangsvinduer: slotKey → stop_id → [{route_id, short_name, arrival, departure}]
-  const departureSlots = {};  // e.g. "08_05" → { stop_id: [...] }
+  // Byg 5-min afgangsvinduer: slotKey ('HH_MM', f.eks. '08_05') → stop_id → [{route_id, short_name, arrival, departure}]
+  const departureSlots = {};
 
   const lines = stopTimesText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/^\uFEFF/, ''));
