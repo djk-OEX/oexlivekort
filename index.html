@@ -159,6 +159,14 @@ svg.map-icon {
                 <circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>
               </svg>
             </button>
+            <button class="oex-btn" id="busBtn" title="Vis/skjul busstoppesteder">
+              <svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="5" width="18" height="13" rx="2"/>
+                <path d="M3 10h18"/>
+                <path d="M8 5v13M16 5v13"/>
+                <circle cx="7.5" cy="18.5" r="1.5"/><circle cx="16.5" cy="18.5" r="1.5"/>
+              </svg>
+            </button>
           </div>
           <div class="actions">
             <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
@@ -189,7 +197,13 @@ svg.map-icon {
 
   // ===== Azure Maps setup =====
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer, routeLabelMarker;
+  let busSource, busClusterLayer, busPointLayer, busLabelLayer;
+  let busActive = false, busDataLoaded = false;
   let currentTravelMode = 'car';
+
+  const BUS_STOPS_URL  = 'https://oexazfilkonto.blob.core.windows.net/gtfs/stops.json';
+  const BUS_ROUTES_URL = 'https://oexazfilkonto.blob.core.windows.net/gtfs/routes.json';
+  let _busStopsData = null, _busRoutesData = null;
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -346,7 +360,24 @@ svg.map-icon {
       routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
       map.layers.add(routeLayer, "labels");
 
-
+      busSource = new atlas.source.DataSource(null, { cluster: true, clusterRadius: 40, clusterMaxZoom: 14 });
+      map.sources.add(busSource);
+      busClusterLayer = new atlas.layer.BubbleLayer(busSource, null, {
+        filter: ['has','point_count'],
+        radius: ['step',['get','point_count'], 14, 10, 18, 50, 22],
+        color: '#FF8C00', strokeWidth: 2, strokeColor: '#ffffff', opacity: 0.85
+      });
+      busPointLayer = new atlas.layer.BubbleLayer(busSource, null, {
+        filter: ['!',['has','point_count']],
+        radius: 5, color: '#FF8C00', strokeWidth: 1, strokeColor: '#ffffff', opacity: 0.9
+      });
+      busLabelLayer = new atlas.layer.SymbolLayer(busSource, null, {
+        filter: ['has','point_count'],
+        textOptions: { textField: ['get','point_count_abbreviated'], color: '#ffffff', size: 11, offset: [0,0] },
+        iconOptions: { image: 'none' }
+      });
+      map.layers.add([busClusterLayer, busPointLayer, busLabelLayer], "labels");
+      [busClusterLayer, busPointLayer, busLabelLayer].forEach(l => l.setOptions({ visible: false }));
 
       try{ map.controls.add(new atlas.control.CompassControl({ rotationDegreesDelta: 15 }), { position: 'top-right' }); }catch(e){ console.warn('CompassControl add fail', e); }
       try{ map.controls.add(new atlas.control.PitchControl(), { position: 'top-right' }); }catch(e){ console.warn('PitchControl add fail', e); }
@@ -409,6 +440,11 @@ svg.map-icon {
           travelModeBtn.innerHTML = currentTravelMode === 'car' ? carIcon : pedestrianIcon;
           updateMapFromForm(false);
         });
+      }
+
+      const busBtn = document.getElementById('busBtn');
+      if(busBtn){
+        busBtn.addEventListener('click', ()=>{ busActive ? hideBusStops(busBtn) : showBusStops(busBtn); });
       }
 
       window.addEventListener('resize', safeResize);
@@ -542,6 +578,39 @@ svg.map-icon {
   }
 
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; updateMapFromForm(false); }
+
+  // ===== Bus stops =====
+  async function showBusStops(btn) {
+    busActive = true;
+    if(btn){ btn.style.borderColor = '#FF8C00'; btn.style.color = '#FF8C00'; }
+    try {
+      if(!busDataLoaded){
+        const [stopsRes, routesRes] = await Promise.all([
+          fetch(BUS_STOPS_URL, { credentials: 'omit' }),
+          fetch(BUS_ROUTES_URL, { credentials: 'omit' })
+        ]);
+        if(!stopsRes.ok) throw new Error('stops HTTP ' + stopsRes.status);
+        _busStopsData = await stopsRes.json();
+        if(routesRes.ok) _busRoutesData = await routesRes.json();
+        const features = _busStopsData
+          .filter(s => isValidLatLon(s.lat, s.lon))
+          .map(s => new atlas.data.Feature(new atlas.data.Point([s.lon, s.lat]), { name: s.name, id: s.id }));
+        busSource.add(features);
+        busDataLoaded = true;
+      }
+      [busClusterLayer, busPointLayer, busLabelLayer].forEach(l => l.setOptions({ visible: true }));
+    } catch(e) {
+      console.error('Bus data fejl:', e);
+      busActive = false;
+      if(btn){ btn.style.borderColor = ''; btn.style.color = ''; }
+    }
+  }
+
+  function hideBusStops(btn) {
+    busActive = false;
+    if(btn){ btn.style.borderColor = ''; btn.style.color = ''; }
+    [busClusterLayer, busPointLayer, busLabelLayer].forEach(l => l.setOptions({ visible: false }));
+  }
   function setupPressAndHold(selector, delta){ const btn = document.querySelector(selector); if (!btn) return; let t = null; const step = () => { const cam = map.getCamera(); map.setCamera({ zoom: cam.zoom + delta, animate:true, duration:50 }); }; const start = () => { step(); if (!t) t = setInterval(step, 60); }; const stop = () => { if (t){ clearInterval(t); t = null; } }; btn.addEventListener('mousedown', start); document.addEventListener('mouseup', stop); btn.addEventListener('mouseleave', stop); btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); start(); }, {passive:false}); document.addEventListener('touchend', stop); document.addEventListener('touchcancel', stop); }
 
   // ===== IP FALLBACK =====
