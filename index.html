@@ -9,10 +9,6 @@
   <link rel="stylesheet" href="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.css" type="text/css"/>
   <script src="https://atlas.microsoft.com/sdk/javascript/mapcontrol/3/atlas.min.js"></script>
 
-  <!-- OEX Live Positions Overlay (additive, non-breaking) -->
-  <script src="oex-live-overlay.js"></script>
-  <!-- Azure Maps subscription key is hardcoded below; replace PASTE_YOUR_AZURE_MAPS_KEY_HERE with your own key. -->
-
   <!-- OEX BRANDING -->
   <meta name="color-scheme" content="dark"/>
   <style>
@@ -154,12 +150,6 @@ svg.map-icon {
               <svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M9 3L3 6v15l6-3 6 3 6-3V3l-6 3-6-3z"/>
                 <path d="M9 3v15M15 6v15"/>
-              </svg>
-            </button>
-            <button class="oex-btn" id="oexLiveToggleBtn" aria-label="Live positioner til/fra" title="Live positioner til/fra" aria-pressed="false">
-              <svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2C8.686 2 6 4.686 6 8c0 5.25 6 13 6 13s6-7.75 6-13c0-3.314-2.686-6-6-6z"/>
-                <circle cx="12" cy="8" r="2.5"/>
               </svg>
             </button>
             <button class="oex-btn" id="travelModeBtn" title="Skift mellem bilrute og gårute">
@@ -429,59 +419,6 @@ svg.map-icon {
       map.events.add('moveend', _oexSync);
       map.events.add('pitchchanged', _oexSync);
       map.events.add('rotateend', _oexSync);
-
-      // --- OEX Live Positions Overlay (additive) ---
-      // IMPORTANT: initOexLiveOverlay MUST be called inside the map 'ready'
-      // handler. Adding a DataSource or Layer before 'ready' fires leaves the
-      // map's internal state as null, causing engine errors such as:
-      // "Expected value to be of type number, but found null instead"
-      // (ue.performSymbolLayout / parse → evaluate → loadTile).
-      if (typeof initOexLiveOverlay === 'function') {
-        const oexLiveToggleBtn = document.getElementById('oexLiveToggleBtn');
-        let _liveOn = false;
-
-        window.oexLive = initOexLiveOverlay(map, {
-          onStatus: (status, detail) => {
-            if (!oexLiveToggleBtn) return;
-            if (status === 'error') {
-              const reason =
-                detail === 'network'       ? 'Netværksfejl – tjek forbindelsen'     :
-                detail === 'bad_response'  ? 'Uventet svar fra serveren'            :
-                detail === 503             ? 'Tjeneste ikke konfigureret (503)'      :
-                detail === 502             ? 'Serverfejl (502)'                      :
-                                             `Fejl (HTTP ${detail})`;
-              oexLiveToggleBtn.title = `Live positioner – ${reason}`;
-              // Flash the button amber to signal the error without disabling it.
-              oexLiveToggleBtn.style.outline = '2px solid #FFA500';
-              setTimeout(() => { oexLiveToggleBtn.style.outline = ''; }, 3000);
-            } else {
-              // status === 'ok'
-              const label = detail === 1 ? '1 aktiv' : `${detail} aktive`;
-              oexLiveToggleBtn.title = `Live positioner til/fra (${label})`;
-              oexLiveToggleBtn.style.outline = '';
-            }
-          }
-        });
-
-        if (window.oexLive) {
-          window.oexLive.setVisible(true);
-          _liveOn = true;
-        }
-
-        if (oexLiveToggleBtn && window.oexLive) {
-          oexLiveToggleBtn.style.opacity = '';
-          oexLiveToggleBtn.setAttribute('aria-pressed', 'true');
-          oexLiveToggleBtn.classList.add('oex-chip-on');
-          oexLiveToggleBtn.addEventListener('click', () => {
-            _liveOn = !_liveOn;
-            window.oexLive.setVisible(_liveOn);
-            oexLiveToggleBtn.setAttribute('aria-pressed', String(_liveOn));
-            oexLiveToggleBtn.classList.toggle('oex-chip-on', _liveOn);
-            oexLiveToggleBtn.style.opacity = _liveOn ? '' : '0.45';
-            if (!_liveOn) oexLiveToggleBtn.title = 'Live positioner til/fra';
-          });
-        }
-      }
     });
   }
 
