@@ -628,8 +628,10 @@ svg.map-icon {
   // ── GTFS local stop lookup ──────────────────────────────────────────────────
   let _gtfsStops = null;
   let _gtfsStopsLoading = null;
-  let _gtfsRoutes = null;
+  let _gtfsRouteLookup = null;      // route_id → short_name
   let _gtfsRoutesLoading = null;
+  let _depsCacheKey = null;         // currently cached departure slot key
+  let _depsCacheData = null;        // currently cached departure file data
 
   async function loadGtfsStops(){
     if (_gtfsStops) return _gtfsStops;
@@ -642,13 +644,52 @@ svg.map-icon {
   }
 
   async function loadGtfsRoutes(){
-    if (_gtfsRoutes) return _gtfsRoutes;
+    if (_gtfsRouteLookup) return _gtfsRouteLookup;
     if (_gtfsRoutesLoading) return _gtfsRoutesLoading;
-    _gtfsRoutesLoading = fetch('data/stop_routes.json')
+    _gtfsRoutesLoading = fetch('data/routes.json')
       .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-      .then(data => { _gtfsRoutes = (data && typeof data === 'object') ? data : {}; _gtfsRoutesLoading = null; return _gtfsRoutes; })
-      .catch(e => { console.warn('loadGtfsRoutes fejl:', e); _gtfsRoutes = {}; _gtfsRoutesLoading = null; return _gtfsRoutes; });
+      .then(data => {
+        const lookup = {};
+        if (Array.isArray(data)){
+          // Schema: [{route_id, short_name, ...}]
+          data.forEach(r => { if (r.route_id && r.short_name) lookup[r.route_id] = r.short_name; });
+        } else if (data && typeof data === 'object'){
+          // Alternate schema: {short_name: {agencyId, ...}} – store short_names as fallback keys
+          Object.keys(data).forEach(k => { lookup[k] = k; });
+        }
+        _gtfsRouteLookup = lookup;
+        _gtfsRoutesLoading = null;
+        return _gtfsRouteLookup;
+      })
+      .catch(e => { console.warn('loadGtfsRoutes fejl:', e); _gtfsRouteLookup = {}; _gtfsRoutesLoading = null; return _gtfsRouteLookup; });
     return _gtfsRoutesLoading;
+  }
+
+  function _getDepartureSlotKey(){
+    const now = new Date();
+    let h = now.getHours();
+    const m = now.getMinutes();
+    // GTFS allows hours > 23 for after-midnight service
+    if (h < 4) h += 24;
+    const slotMin = Math.floor(m / 5) * 5;
+    return String(h).padStart(2,'0') + '_' + String(slotMin).padStart(2,'0');
+  }
+
+  async function _loadDepartureWindow(slotKey){
+    if (_depsCacheKey === slotKey && _depsCacheData !== null) return _depsCacheData;
+    try{
+      const r = await fetch('data/departures_5min/' + slotKey + '.json');
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const data = await r.json();
+      _depsCacheKey = slotKey;
+      _depsCacheData = (data && typeof data === 'object') ? data : {};
+      return _depsCacheData;
+    }catch(e){
+      console.warn('_loadDepartureWindow fejl ('+slotKey+'):', e);
+      _depsCacheKey = slotKey;
+      _depsCacheData = {};
+      return {};
+    }
   }
 
   async function findNearestGtfsStop(lat, lng, radiusMeters){
@@ -658,44 +699,47 @@ svg.map-icon {
       if (!stops.length) return null;
       // Begrænset bounding box for hurtig filtrering
       const latDelta = radiusMeters / 111320;
-      const lngDelta = radiusMeters / (111320 * Math.cos(lat * Math.PI / 180));
+      const lonDelta = radiusMeters / (111320 * Math.cos(lat * Math.PI / 180));
       let best = null, bestDist = Infinity;
       for (let i = 0; i < stops.length; i++){
         const s = stops[i];
         if (s.lat < lat - latDelta || s.lat > lat + latDelta) continue;
-        if (s.lng < lng - lngDelta || s.lng > lng + lngDelta) continue;
-        const d = _haversineDist(lat, lng, s.lat, s.lng);
+        const sLon = s.lon !== undefined ? s.lon : s.lng;
+        if (sLon < lng - lonDelta || sLon > lng + lonDelta) continue;
+        const d = _haversineDist(lat, lng, s.lat, sLon);
         if (d < bestDist){ bestDist = d; best = s; }
       }
       if (!best || bestDist > radiusMeters) return null;
-      return { id: best.id, name: best.name, lat: best.lat, lng: best.lng, dist: Math.round(bestDist) };
+      const bestLon = best.lon !== undefined ? best.lon : best.lng;
+      const stopId = best.stop_id !== undefined ? best.stop_id : best.id;
+      return { stop_id: stopId, name: best.name, lat: best.lat, lon: bestLon, dist: Math.round(bestDist) };
     }catch(e){ console.warn('findNearestGtfsStop fejl:', e); return null; }
   }
 
   async function fetchGtfsDepartures(stopId){
     try{
-      const routes = await loadGtfsRoutes();
-      const entries = routes[stopId];
+      const slotKey = _getDepartureSlotKey();
+      const [depsWindow, routeLookup] = await Promise.all([
+        _loadDepartureWindow(slotKey),
+        loadGtfsRoutes()
+      ]);
+      const entries = depsWindow[stopId];
       if (!entries || !entries.length) return [];
-      return entries.slice(0, 8).map(e => ({
-        name: e.line || '',
-        direction: (e.headsigns && e.headsigns.length) ? e.headsigns.join(' / ') : '',
-        time: '',
-        isRt: false
-      }));
+      return entries.slice(0, 8).map(e => {
+        const label = routeLookup[e.route_id] || '';
+        const timeStr = (e.departure || e.arrival || '').substring(0, 5);
+        return { name: label, time: timeStr };
+      });
     }catch(e){ console.warn('fetchGtfsDepartures fejl:', e); return []; }
   }
 
-
-
-
   function _renderRouteList(deps){
-    if (!deps || !deps.length) return '';
+    if (!deps || !deps.length) return '<div class="oex-tp-deps"><div class="oex-tp-dep" style="color:#bbbbbb;font-size:12px;">Ingen afgange i dette tidsvindue</div></div>';
     let html = '<div class="oex-tp-deps">';
     deps.forEach(d => {
+      const label = d.name ? escapeHtml(d.name) + ' · ' + escapeHtml(d.time) : escapeHtml(d.time);
       html += '<div class="oex-tp-dep">'+
-        '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>'+
-        '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>'+
+        '<span class="oex-tp-dep-line">'+label+'</span>'+
         '</div>';
     });
     html += '</div>';
@@ -742,20 +786,20 @@ svg.map-icon {
     ]);
 
     const [deps1, deps2] = await Promise.all([
-      (stop1 && stop1.id) ? fetchGtfsDepartures(stop1.id) : Promise.resolve([]),
-      (stop2 && stop2.id) ? fetchGtfsDepartures(stop2.id) : Promise.resolve([])
+      (stop1 && stop1.stop_id) ? fetchGtfsDepartures(stop1.stop_id) : Promise.resolve([]),
+      (stop2 && stop2.stop_id) ? fetchGtfsDepartures(stop2.stop_id) : Promise.resolve([])
     ]);
 
     if (stop1){
       const m = new atlas.HtmlMarker({
-        position: [stop1.lng, stop1.lat],
+        position: [stop1.lon, stop1.lat],
         htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;">🚌 A</div>'
       });
       map.markers.add(m); busMarkers.push(m);
     }
     if (stop2){
       const m = new atlas.HtmlMarker({
-        position: [stop2.lng, stop2.lat],
+        position: [stop2.lon, stop2.lat],
         htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;">🚌 B</div>'
       });
       map.markers.add(m); busMarkers.push(m);
