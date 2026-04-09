@@ -481,7 +481,7 @@ svg.map-icon {
       map.events.add('rotateend', _oexSync);
 
       // Forudindlæs GTFS stop-data i baggrunden så det er klar ved brug
-      Promise.all([loadGtfsStops(), loadGtfsRoutes()]).catch(() => {});
+      Promise.all([loadGtfsStops(), loadGtfsDepartures(), loadGtfsRouteMeta()]).catch(() => {});
     });
   }
 
@@ -628,27 +628,66 @@ svg.map-icon {
   // ── GTFS local stop lookup ──────────────────────────────────────────────────
   let _gtfsStops = null;
   let _gtfsStopsLoading = null;
-  let _gtfsRoutes = null;
-  let _gtfsRoutesLoading = null;
+  let _gtfsDepartures = null;
+  let _gtfsDeparturesLoading = null;
+  let _gtfsRouteMeta = null;
+  let _gtfsRouteMetaLoading = null;
 
   async function loadGtfsStops(){
     if (_gtfsStops) return _gtfsStops;
     if (_gtfsStopsLoading) return _gtfsStopsLoading;
     _gtfsStopsLoading = fetch('data/stops.json')
       .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-      .then(data => { _gtfsStops = Array.isArray(data) ? data : []; _gtfsStopsLoading = null; return _gtfsStops; })
+      .then(data => {
+        // Normalize field names: stop_id → id, lon → lng
+        _gtfsStops = (Array.isArray(data) ? data : []).map(s => ({
+          id:   s.id   || s.stop_id || '',
+          name: s.name || '',
+          lat:  s.lat,
+          lng:  s.lng  !== undefined ? s.lng : s.lon
+        }));
+        _gtfsStopsLoading = null;
+        return _gtfsStops;
+      })
       .catch(e => { console.warn('loadGtfsStops fejl:', e); _gtfsStops = []; _gtfsStopsLoading = null; return _gtfsStops; });
     return _gtfsStopsLoading;
   }
 
-  async function loadGtfsRoutes(){
-    if (_gtfsRoutes) return _gtfsRoutes;
-    if (_gtfsRoutesLoading) return _gtfsRoutesLoading;
-    _gtfsRoutesLoading = fetch('data/stop_routes.json')
+  async function loadGtfsDepartures(){
+    if (_gtfsDepartures) return _gtfsDepartures;
+    if (_gtfsDeparturesLoading) return _gtfsDeparturesLoading;
+    _gtfsDeparturesLoading = fetch('data/departures.json')
       .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-      .then(data => { _gtfsRoutes = (data && typeof data === 'object') ? data : {}; _gtfsRoutesLoading = null; return _gtfsRoutes; })
-      .catch(e => { console.warn('loadGtfsRoutes fejl:', e); _gtfsRoutes = {}; _gtfsRoutesLoading = null; return _gtfsRoutes; });
-    return _gtfsRoutesLoading;
+      .then(data => { _gtfsDepartures = (data && typeof data === 'object') ? data : {}; _gtfsDeparturesLoading = null; return _gtfsDepartures; })
+      .catch(e => { console.warn('loadGtfsDepartures fejl:', e); _gtfsDepartures = {}; _gtfsDeparturesLoading = null; return _gtfsDepartures; });
+    return _gtfsDeparturesLoading;
+  }
+
+  async function loadGtfsRouteMeta(){
+    if (_gtfsRouteMeta) return _gtfsRouteMeta;
+    if (_gtfsRouteMetaLoading) return _gtfsRouteMetaLoading;
+    _gtfsRouteMetaLoading = fetch('data/routes.json')
+      .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(data => {
+        const map = {};
+        (Array.isArray(data) ? data : []).forEach(r => { if (r.route_id) map[r.route_id] = r.short_name || r.route_id; });
+        _gtfsRouteMeta = map;
+        _gtfsRouteMetaLoading = null;
+        return _gtfsRouteMeta;
+      })
+      .catch(e => { console.warn('loadGtfsRouteMeta fejl:', e); _gtfsRouteMeta = {}; _gtfsRouteMetaLoading = null; return _gtfsRouteMeta; });
+    return _gtfsRouteMetaLoading;
+  }
+
+  // Convert HH:MM:SS (may exceed 24h) to minutes since midnight
+  function _gtfsTimeToMins(hms){
+    const p = hms.split(':');
+    return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+  }
+
+  function _currentMins(){
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
   }
 
   async function findNearestGtfsStop(lat, lng, radiusMeters){
@@ -674,13 +713,21 @@ svg.map-icon {
 
   async function fetchGtfsDepartures(stopId){
     try{
-      const routes = await loadGtfsRoutes();
-      const entries = routes[stopId];
+      const [departures, routeMeta] = await Promise.all([loadGtfsDepartures(), loadGtfsRouteMeta()]);
+      const entries = departures[stopId];
       if (!entries || !entries.length) return [];
-      return entries.slice(0, 8).map(e => ({
-        name: e.line || '',
-        direction: (e.headsigns && e.headsigns.length) ? e.headsigns.join(' / ') : '',
-        time: '',
+      const nowMins = _currentMins();
+      // Filter upcoming departures within the next 90 minutes, handling midnight wraparound
+      const upcoming = entries.filter(e => {
+        const depMins = _gtfsTimeToMins(e.departure);
+        const diff = ((depMins - nowMins) + 1440) % 1440;
+        return diff <= 90;
+      });
+      const result = (upcoming.length ? upcoming : entries).slice(0, 8);
+      return result.map(e => ({
+        name: routeMeta[e.route_id] || e.route_id || '',
+        direction: '',
+        time: e.departure ? e.departure.substring(0, 5) : '',
         isRt: false
       }));
     }catch(e){ console.warn('fetchGtfsDepartures fejl:', e); return []; }
@@ -695,7 +742,8 @@ svg.map-icon {
     deps.forEach(d => {
       html += '<div class="oex-tp-dep">'+
         '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>'+
-        '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>'+
+        (d.direction ? '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>' : '')+
+        (d.time ? '<span class="oex-tp-dep-time">'+escapeHtml(d.time)+'</span>' : '')+
         '</div>';
     });
     html += '</div>';
