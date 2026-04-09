@@ -97,6 +97,58 @@ svg.map-icon {
   stroke-linejoin:round !important;
 }
 
+/* OEX TRANSIT PANEL */
+#oex-transit-panel {
+  position:absolute;
+  bottom:18px;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:30;
+  background:#000000;
+  border:2px solid #00B0F8;
+  border-radius:10px;
+  padding:10px 16px;
+  color:#ffffff;
+  font-size:13px;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  max-width:min(420px, 90vw);
+  width:max-content;
+  box-shadow:0 4px 18px rgba(0,176,248,.25);
+  pointer-events:auto;
+}
+#oex-transit-panel .oex-tp-title {
+  font-weight:700;
+  font-size:13px;
+  color:#00B0F8;
+  margin-bottom:6px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+#oex-transit-panel .oex-tp-row {
+  margin:3px 0;
+  color:#e8e8e8;
+}
+#oex-transit-panel .oex-tp-row strong { color:#ffffff; }
+#oex-transit-panel .oex-tp-link {
+  display:inline-block;
+  margin-top:8px;
+  color:#00B0F8;
+  font-weight:700;
+  text-decoration:none;
+  border:1px solid #00B0F8;
+  border-radius:6px;
+  padding:4px 10px;
+  font-size:12px;
+}
+#oex-transit-panel .oex-tp-link:hover { background:#00B0F8; color:#000; }
+#oex-transit-panel .oex-tp-deps { margin-top:4px; margin-bottom:2px; }
+#oex-transit-panel .oex-tp-dep { display:flex; align-items:center; gap:6px; margin:2px 0; font-size:12px; }
+#oex-transit-panel .oex-tp-dep-line { background:#00B0F8; color:#000; border-radius:3px; padding:1px 5px; font-weight:700; min-width:32px; text-align:center; flex-shrink:0; }
+#oex-transit-panel .oex-tp-dep-dir { flex:1; color:#e0e0e0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#oex-transit-panel .oex-tp-dep-time { color:#ffffff; font-weight:700; white-space:nowrap; }
+#oex-transit-panel .oex-tp-dep-rt { color:#00e676; font-size:10px; margin-left:2px; }
+
 </style>
 </head>
 <body>
@@ -190,6 +242,7 @@ svg.map-icon {
   // ===== Azure Maps setup =====
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer, routeLabelMarker;
   let currentTravelMode = 'car';
+  let busMarkers = [];
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -404,9 +457,16 @@ svg.map-icon {
       if(travelModeBtn){
         const carIcon = '<svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="9" width="20" height="9" rx="2"/><path d="M5 9l2-4h10l2 4"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></svg>';
         const pedestrianIcon = '<svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><path d="M12 6v5l-3 6M12 11l3 6"/><path d="M9 9l-2 3M15 9l2 3"/></svg>';
+        const busIcon = '<svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M3 9h18"/><circle cx="7.5" cy="19" r="1.5"/><circle cx="16.5" cy="19" r="1.5"/><path d="M7.5 17.5v-1.5M16.5 17.5v-1.5"/></svg>';
+        const modes = ['car','pedestrian','bus'];
+        const icons  = { car: carIcon, pedestrian: pedestrianIcon, bus: busIcon };
+        const titles = { car: 'Skift til gang-rute', pedestrian: 'Skift til bus-rute', bus: 'Skift til bil-rute' };
+        travelModeBtn.title = titles[currentTravelMode];
         travelModeBtn.addEventListener('click', ()=>{
-          currentTravelMode = (currentTravelMode === 'car') ? 'pedestrian' : 'car';
-          travelModeBtn.innerHTML = currentTravelMode === 'car' ? carIcon : pedestrianIcon;
+          const next = modes[(modes.indexOf(currentTravelMode)+1) % modes.length];
+          currentTravelMode = next;
+          travelModeBtn.innerHTML = icons[next];
+          travelModeBtn.title = titles[next];
           updateMapFromForm(false);
         });
       }
@@ -508,6 +568,8 @@ svg.map-icon {
 
   async function drawRouteIfReady(){
     if (!routeSource) return; routeSource.clear(); if (routeLabelMarker) { map.markers.remove(routeLabelMarker); routeLabelMarker = null; }
+    if (currentTravelMode === 'bus') { await findAndShowTransit(); return; }
+    clearBusDisplay();
     const lat1 = readNum("lat1"), lng1 = readNum("lng1"), lat2 = readNum("lat2"), lng2 = readNum("lng2");
     if(!(isValidLatLon(lat1,lng1) && isValidLatLon(lat2,lng2))) return;
     try{
@@ -541,7 +603,204 @@ svg.map-icon {
     }catch(e){ console.error('Azure Maps route fejl:', e); }
   }
 
-  function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; updateMapFromForm(false); }
+  // ===== Bus / Transit helpers =====
+  function escapeHtml(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  function clearBusDisplay(){
+    busMarkers.forEach(m=>{ try{ map.markers.remove(m); }catch(_){} });
+    busMarkers = [];
+    const panel = document.getElementById('oex-transit-panel');
+    if (panel) panel.remove();
+  }
+
+  async function findNearestBusStop(lat, lng){
+    try{
+      const url = 'https://atlas.microsoft.com/search/nearby/json'+
+        '?api-version=1.0'+
+        '&categorySet=7521'+
+        '&radius=800'+
+        '&limit=1'+
+        '&subscription-key='+encodeURIComponent(AZURE_MAPS_KEY)+
+        '&lat='+encodeURIComponent(lat)+
+        '&lon='+encodeURIComponent(lng);
+      const res = await fetch(url, { credentials:'omit' });
+      if (!res.ok) throw new Error('HTTP '+res.status);
+      const data = await res.json();
+      const r = (data && data.results && data.results[0]) || null;
+      if (!r || !r.position) return null;
+      const name = (r.poi && r.poi.name) ? r.poi.name : ((r.address && r.address.freeformAddress) ? r.address.freeformAddress : 'Busstop');
+      return { name, lat: r.position.lat, lng: r.position.lon, dist: Math.round(r.dist || 0) };
+    }catch(e){ console.warn('findNearestBusStop fejl:', e); return null; }
+  }
+
+  function minsUntil(timeStr){
+    const now = new Date();
+    const parts = (timeStr||'').split(':');
+    if (parts.length < 2) return null;
+    const h = parseInt(parts[0],10), m = parseInt(parts[1],10);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+    const dep = new Date(now);
+    dep.setHours(h, m, 0, 0);
+    if (dep < now) dep.setDate(dep.getDate() + 1);
+    return Math.round((dep - now) / 60000);
+  }
+
+  async function findRejseplanenStopId(stopName){
+    try{
+      const url = 'https://xmlopen.rejseplanen.dk/bin/rest.exe/location?input='+encodeURIComponent(stopName)+'&format=json';
+      const res = await fetch(url, { credentials:'omit' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const stops = (data && data.LocationList && data.LocationList.StopLocation) || [];
+      const first = Array.isArray(stops) ? stops[0] : stops;
+      return (first && first.id) ? first.id : null;
+    }catch(e){ console.warn('Rejseplanen location fejl:', e); return null; }
+  }
+
+  async function fetchNextDepartures(stopId){
+    try{
+      const url = 'https://xmlopen.rejseplanen.dk/bin/rest.exe/departureBoard?id='+encodeURIComponent(stopId)+'&useBus=1&format=json';
+      const res = await fetch(url, { credentials:'omit' });
+      if (!res.ok) return [];
+      const data = await res.json();
+      const deps = (data && data.DepartureBoard && data.DepartureBoard.Departure) || [];
+      const list = Array.isArray(deps) ? deps : (deps && typeof deps === 'object' ? [deps] : []);
+      return list.slice(0,5).map(d => ({
+        name: d.name || '',
+        direction: d.direction || '',
+        time: d.rtTime || d.time || '',
+        isRt: !!d.rtTime
+      }));
+    }catch(e){ console.warn('Rejseplanen departures fejl:', e); return []; }
+  }
+
+  function showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2){
+    const existing = document.getElementById('oex-transit-panel');
+    if (existing) existing.remove();
+    const panel = document.createElement('div');
+    panel.id = 'oex-transit-panel';
+    let html = '<div class="oex-tp-title">🚌 Nærmeste busstop</div>';
+    if (stop1){
+      html += '<div class="oex-tp-row"><strong>Fra A:</strong> '+escapeHtml(stop1.name)+'</div>';
+      html += '<div class="oex-tp-row" style="color:#bbbbbb;font-size:12px;">'+stop1.dist+' m til fods</div>';
+      if (deps1 && deps1.length){
+        html += '<div class="oex-tp-deps">';
+        deps1.forEach(d => {
+          const mins = minsUntil(d.time);
+          const timeLabel = (mins !== null && mins >= 0) ? mins+' min' : escapeHtml(d.time);
+          const rtBadge = d.isRt ? '<span class="oex-tp-dep-rt">●</span>' : '';
+          html += '<div class="oex-tp-dep">'+
+            '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>'+
+            '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>'+
+            '<span class="oex-tp-dep-time">'+timeLabel+rtBadge+'</span>'+
+            '</div>';
+        });
+        html += '</div>';
+      }
+    } else {
+      html += '<div class="oex-tp-row" style="color:#bbbbbb;">Ingen busstop fundet inden for 800 m fra A</div>';
+    }
+    if (hasB){
+      if (stop2){
+        html += '<div class="oex-tp-row" style="margin-top:6px;"><strong>Til B:</strong> '+escapeHtml(stop2.name)+'</div>';
+        html += '<div class="oex-tp-row" style="color:#bbbbbb;font-size:12px;">'+stop2.dist+' m til fods</div>';
+        if (deps2 && deps2.length){
+          html += '<div class="oex-tp-deps">';
+          deps2.forEach(d => {
+            const mins = minsUntil(d.time);
+            const timeLabel = (mins !== null && mins >= 0) ? mins+' min' : escapeHtml(d.time);
+            const rtBadge = d.isRt ? '<span class="oex-tp-dep-rt">●</span>' : '';
+            html += '<div class="oex-tp-dep">'+
+              '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>'+
+              '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>'+
+              '<span class="oex-tp-dep-time">'+timeLabel+rtBadge+'</span>'+
+              '</div>';
+          });
+          html += '</div>';
+        }
+      } else {
+        html += '<div class="oex-tp-row" style="color:#bbbbbb;margin-top:6px;">Ingen busstop fundet inden for 800 m fra B</div>';
+      }
+    }
+    panel.innerHTML = html;
+    const mapWrap = document.querySelector('.map-wrap');
+    if (mapWrap) mapWrap.appendChild(panel);
+  }
+
+  async function findAndShowTransit(){
+    clearBusDisplay();
+    const lat1 = readNum("lat1"), lng1 = readNum("lng1"), lat2 = readNum("lat2"), lng2 = readNum("lng2");
+    const hasA = isValidLatLon(lat1, lng1);
+    const hasB = isValidLatLon(lat2, lng2);
+    if (!hasA) return;
+
+    const [stop1, stop2] = await Promise.all([
+      hasA ? findNearestBusStop(lat1, lng1) : Promise.resolve(null),
+      hasB ? findNearestBusStop(lat2, lng2) : Promise.resolve(null)
+    ]);
+
+    const [rpId1, rpId2] = await Promise.all([
+      stop1 ? findRejseplanenStopId(stop1.name) : Promise.resolve(null),
+      stop2 ? findRejseplanenStopId(stop2.name) : Promise.resolve(null)
+    ]);
+
+    const [deps1, deps2] = await Promise.all([
+      rpId1 ? fetchNextDepartures(rpId1) : Promise.resolve([]),
+      rpId2 ? fetchNextDepartures(rpId2) : Promise.resolve([])
+    ]);
+
+    if (stop1){
+      const m = new atlas.HtmlMarker({
+        position: [stop1.lng, stop1.lat],
+        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;">🚌 A</div>'
+      });
+      map.markers.add(m); busMarkers.push(m);
+    }
+    if (stop2){
+      const m = new atlas.HtmlMarker({
+        position: [stop2.lng, stop2.lat],
+        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;">🚌 B</div>'
+      });
+      map.markers.add(m); busMarkers.push(m);
+    }
+
+    if (hasA && hasB){
+      try{
+        const url = 'https://atlas.microsoft.com/route/directions/json'+
+          '?api-version=1.0'+
+          '&travelMode=bus'+
+          '&subscription-key='+encodeURIComponent(AZURE_MAPS_KEY)+
+          '&query='+encodeURIComponent(`${lat1},${lng1}:${lat2},${lng2}`);
+        const res = await fetch(url, { credentials:'omit' });
+        if (res.ok){
+          const data = await res.json();
+          const route = (((data||{}).routes||[])[0]||{});
+          let coords = [];
+          const legs = route.legs || [];
+          legs.forEach(leg=>{ (leg.points||[]).forEach(p=>{ if(isValidLatLon(p.latitude, p.longitude)){ coords.push([p.longitude,p.latitude]); } }); });
+          if (coords.length >= 2){
+            routeSource.add(new atlas.data.Feature(new atlas.data.LineString(coords)));
+            const summary = route.summary || {};
+            if (summary.lengthInMeters && summary.travelTimeInSeconds){
+              const label = formatRouteLabel(summary.lengthInMeters, summary.travelTimeInSeconds);
+              const mid = routeMidpoint(coords);
+              routeLabelMarker = new atlas.HtmlMarker({
+                position: mid,
+                htmlContent: '<div style="background:#000000;color:#ffffff;padding:4px 10px;border-radius:4px;border:2px solid #00B0F8;font-size:13px;font-weight:bold;white-space:nowrap;font-family:sans-serif;">🚌 '+label+'</div>'
+              });
+              map.markers.add(routeLabelMarker);
+            }
+            try { map.setCamera({ bounds: atlas.data.BoundingBox.fromLatLngs(coords), padding: 60, duration: 500 }); } catch(e) {}
+            setTimeout(safeResize, 50);
+          }
+        }
+      }catch(e){ console.warn('Bus route fejl (forventet):', e); }
+    }
+
+    showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2);
+  }
+
+  function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; clearBusDisplay(); updateMapFromForm(false); }
   function setupPressAndHold(selector, delta){ const btn = document.querySelector(selector); if (!btn) return; let t = null; const step = () => { const cam = map.getCamera(); map.setCamera({ zoom: cam.zoom + delta, animate:true, duration:50 }); }; const start = () => { step(); if (!t) t = setInterval(step, 60); }; const stop = () => { if (t){ clearInterval(t); t = null; } }; btn.addEventListener('mousedown', start); document.addEventListener('mouseup', stop); btn.addEventListener('mouseleave', stop); btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); start(); }, {passive:false}); document.addEventListener('touchend', stop); document.addEventListener('touchcancel', stop); }
 
   // ===== IP FALLBACK =====
