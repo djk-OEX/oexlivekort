@@ -479,6 +479,9 @@ svg.map-icon {
       map.events.add('moveend', _oexSync);
       map.events.add('pitchchanged', _oexSync);
       map.events.add('rotateend', _oexSync);
+
+      // Forudindlæs GTFS stop-data i baggrunden så det er klar ved brug
+      Promise.all([loadGtfsStops(), loadGtfsDepartures(), loadGtfsRouteMeta()]).catch(() => {});
     });
   }
 
@@ -622,58 +625,129 @@ svg.map-icon {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   }
 
-  async function findNearestRejseplanenStop(lat, lng, radiusMeters){
+  // ── GTFS local stop lookup ──────────────────────────────────────────────────
+  let _gtfsStops = null;
+  let _gtfsStopsLoading = null;
+  let _gtfsDepartures = null;
+  let _gtfsDeparturesLoading = null;
+  let _gtfsRouteMeta = null;
+  let _gtfsRouteMetaLoading = null;
+
+  async function loadGtfsStops(){
+    if (_gtfsStops) return _gtfsStops;
+    if (_gtfsStopsLoading) return _gtfsStopsLoading;
+    _gtfsStopsLoading = fetch('data/stops.json')
+      .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(data => {
+        // Normalize field names: stop_id → id, lon → lng
+        _gtfsStops = (Array.isArray(data) ? data : []).map(s => ({
+          id:   s.id   || s.stop_id || '',
+          name: s.name || '',
+          lat:  s.lat,
+          lng:  s.lng  !== undefined ? s.lng : s.lon
+        }));
+        _gtfsStopsLoading = null;
+        return _gtfsStops;
+      })
+      .catch(e => { console.warn('loadGtfsStops fejl:', e); _gtfsStops = []; _gtfsStopsLoading = null; return _gtfsStops; });
+    return _gtfsStopsLoading;
+  }
+
+  async function loadGtfsDepartures(){
+    if (_gtfsDepartures) return _gtfsDepartures;
+    if (_gtfsDeparturesLoading) return _gtfsDeparturesLoading;
+    _gtfsDeparturesLoading = fetch('data/departures.json')
+      .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(data => { _gtfsDepartures = (data && typeof data === 'object') ? data : {}; _gtfsDeparturesLoading = null; return _gtfsDepartures; })
+      .catch(e => { console.warn('loadGtfsDepartures fejl:', e); _gtfsDepartures = {}; _gtfsDeparturesLoading = null; return _gtfsDepartures; });
+    return _gtfsDeparturesLoading;
+  }
+
+  async function loadGtfsRouteMeta(){
+    if (_gtfsRouteMeta) return _gtfsRouteMeta;
+    if (_gtfsRouteMetaLoading) return _gtfsRouteMetaLoading;
+    _gtfsRouteMetaLoading = fetch('data/routes.json')
+      .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(data => {
+        const map = {};
+        (Array.isArray(data) ? data : []).forEach(r => { if (r.route_id) map[r.route_id] = r.short_name || r.route_id; });
+        _gtfsRouteMeta = map;
+        _gtfsRouteMetaLoading = null;
+        return _gtfsRouteMeta;
+      })
+      .catch(e => { console.warn('loadGtfsRouteMeta fejl:', e); _gtfsRouteMeta = {}; _gtfsRouteMetaLoading = null; return _gtfsRouteMeta; });
+    return _gtfsRouteMetaLoading;
+  }
+
+  // Convert HH:MM:SS (may exceed 24h) to minutes since midnight
+  function _gtfsTimeToMins(hms){
+    const p = hms.split(':');
+    return parseInt(p[0], 10) * 60 + parseInt(p[1], 10);
+  }
+
+  function _currentMins(){
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  }
+
+  async function findNearestGtfsStop(lat, lng, radiusMeters){
     if (radiusMeters === undefined) radiusMeters = 800;
     try{
-      const coordX = Math.round(lng * 1000000);
-      const coordY = Math.round(lat * 1000000);
-      const url = 'https://xmlopen.rejseplanen.dk/bin/rest.exe/stopsNearby'+
-        '?coordX='+coordX+
-        '&coordY='+coordY+
-        '&maxRadius='+radiusMeters+
-        '&maxNumber=1'+
-        '&format=json';
-      const res = await fetch(url, { credentials:'omit' });
-      if (!res.ok) throw new Error('HTTP '+res.status);
-      const data = await res.json();
-      const stops = (data && data.LocationList && data.LocationList.StopLocation) || [];
-      const first = Array.isArray(stops) ? stops[0] : (stops && stops.id ? stops : null);
-      if (!first || !first.id) return null;
-      const stopLat = first.y ? first.y / 1000000 : lat;
-      const stopLng = first.x ? first.x / 1000000 : lng;
-      const dist = Math.round(_haversineDist(lat, lng, stopLat, stopLng));
-      return { id: first.id, name: first.name || 'Busstop', lat: stopLat, lng: stopLng, dist };
-    }catch(e){ console.warn('findNearestRejseplanenStop fejl:', e); return null; }
+      const stops = await loadGtfsStops();
+      if (!stops.length) return null;
+      // Begrænset bounding box for hurtig filtrering
+      const latDelta = radiusMeters / 111320;
+      const lngDelta = radiusMeters / (111320 * Math.cos(lat * Math.PI / 180));
+      let best = null, bestDist = Infinity;
+      for (let i = 0; i < stops.length; i++){
+        const s = stops[i];
+        if (s.lat < lat - latDelta || s.lat > lat + latDelta) continue;
+        if (s.lng < lng - lngDelta || s.lng > lng + lngDelta) continue;
+        const d = _haversineDist(lat, lng, s.lat, s.lng);
+        if (d < bestDist){ bestDist = d; best = s; }
+      }
+      if (!best || bestDist > radiusMeters) return null;
+      return { id: best.id, name: best.name, lat: best.lat, lng: best.lng, dist: Math.round(bestDist) };
+    }catch(e){ console.warn('findNearestGtfsStop fejl:', e); return null; }
   }
 
-  function minsUntil(timeStr){
-    const now = new Date();
-    const parts = (timeStr||'').split(':');
-    if (parts.length < 2) return null;
-    const h = parseInt(parts[0],10), m = parseInt(parts[1],10);
-    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
-    const dep = new Date(now);
-    dep.setHours(h, m, 0, 0);
-    if (dep < now) dep.setDate(dep.getDate() + 1);
-    return Math.round((dep - now) / 60000);
-  }
-
-
-  async function fetchNextDepartures(stopId){
+  async function fetchGtfsDepartures(stopId){
     try{
-      const url = 'https://xmlopen.rejseplanen.dk/bin/rest.exe/departureBoard?id='+encodeURIComponent(stopId)+'&useBus=1&format=json';
-      const res = await fetch(url, { credentials:'omit' });
-      if (!res.ok) return [];
-      const data = await res.json();
-      const deps = (data && data.DepartureBoard && data.DepartureBoard.Departure) || [];
-      const list = Array.isArray(deps) ? deps : (deps && typeof deps === 'object' ? [deps] : []);
-      return list.slice(0,5).map(d => ({
-        name: d.name || '',
-        direction: d.direction || '',
-        time: d.rtTime || d.time || '',
-        isRt: !!d.rtTime
+      const [departures, routeMeta] = await Promise.all([loadGtfsDepartures(), loadGtfsRouteMeta()]);
+      const entries = departures[stopId];
+      if (!entries || !entries.length) return [];
+      const nowMins = _currentMins();
+      // Filter upcoming departures within the next 90 minutes, handling midnight wraparound
+      const upcoming = entries.filter(e => {
+        const depMins = _gtfsTimeToMins(e.departure);
+        const diff = ((depMins - nowMins) + 1440) % 1440;
+        return diff <= 90;
+      });
+      const result = (upcoming.length ? upcoming : entries).slice(0, 8);
+      return result.map(e => ({
+        name: routeMeta[e.route_id] || e.route_id || '',
+        direction: '',
+        time: e.departure ? e.departure.substring(0, 5) : '',
+        isRt: false
       }));
-    }catch(e){ console.warn('Rejseplanen departures fejl:', e); return []; }
+    }catch(e){ console.warn('fetchGtfsDepartures fejl:', e); return []; }
+  }
+
+
+
+
+  function _renderRouteList(deps){
+    if (!deps || !deps.length) return '';
+    let html = '<div class="oex-tp-deps">';
+    deps.forEach(d => {
+      html += '<div class="oex-tp-dep">'+
+        '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>'+
+        (d.direction ? '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>' : '')+
+        (d.time ? '<span class="oex-tp-dep-time">'+escapeHtml(d.time)+'</span>' : '')+
+        '</div>';
+    });
+    html += '</div>';
+    return html;
   }
 
   function showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2){
@@ -685,20 +759,7 @@ svg.map-icon {
     if (stop1){
       html += '<div class="oex-tp-row"><strong>Fra A:</strong> '+escapeHtml(stop1.name)+'</div>';
       html += '<div class="oex-tp-row" style="color:#bbbbbb;font-size:12px;">'+stop1.dist+' m til fods</div>';
-      if (deps1 && deps1.length){
-        html += '<div class="oex-tp-deps">';
-        deps1.forEach(d => {
-          const mins = minsUntil(d.time);
-          const timeLabel = (mins !== null && mins >= 0) ? mins+' min' : escapeHtml(d.time);
-          const rtBadge = d.isRt ? '<span class="oex-tp-dep-rt">●</span>' : '';
-          html += '<div class="oex-tp-dep">'+
-            '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>'+
-            '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>'+
-            '<span class="oex-tp-dep-time">'+timeLabel+rtBadge+'</span>'+
-            '</div>';
-        });
-        html += '</div>';
-      }
+      html += _renderRouteList(deps1);
     } else {
       html += '<div class="oex-tp-row" style="color:#bbbbbb;">Ingen busstop fundet inden for 800 m fra A</div>';
     }
@@ -706,20 +767,7 @@ svg.map-icon {
       if (stop2){
         html += '<div class="oex-tp-row" style="margin-top:6px;"><strong>Til B:</strong> '+escapeHtml(stop2.name)+'</div>';
         html += '<div class="oex-tp-row" style="color:#bbbbbb;font-size:12px;">'+stop2.dist+' m til fods</div>';
-        if (deps2 && deps2.length){
-          html += '<div class="oex-tp-deps">';
-          deps2.forEach(d => {
-            const mins = minsUntil(d.time);
-            const timeLabel = (mins !== null && mins >= 0) ? mins+' min' : escapeHtml(d.time);
-            const rtBadge = d.isRt ? '<span class="oex-tp-dep-rt">●</span>' : '';
-            html += '<div class="oex-tp-dep">'+
-              '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>'+
-              '<span class="oex-tp-dep-dir">'+escapeHtml(d.direction)+'</span>'+
-              '<span class="oex-tp-dep-time">'+timeLabel+rtBadge+'</span>'+
-              '</div>';
-          });
-          html += '</div>';
-        }
+        html += _renderRouteList(deps2);
       } else {
         html += '<div class="oex-tp-row" style="color:#bbbbbb;margin-top:6px;">Ingen busstop fundet inden for 800 m fra B</div>';
       }
@@ -737,13 +785,13 @@ svg.map-icon {
     if (!hasA) return;
 
     const [stop1, stop2] = await Promise.all([
-      hasA ? findNearestRejseplanenStop(lat1, lng1) : Promise.resolve(null),
-      hasB ? findNearestRejseplanenStop(lat2, lng2) : Promise.resolve(null)
+      hasA ? findNearestGtfsStop(lat1, lng1) : Promise.resolve(null),
+      hasB ? findNearestGtfsStop(lat2, lng2) : Promise.resolve(null)
     ]);
 
     const [deps1, deps2] = await Promise.all([
-      (stop1 && stop1.id) ? fetchNextDepartures(stop1.id) : Promise.resolve([]),
-      (stop2 && stop2.id) ? fetchNextDepartures(stop2.id) : Promise.resolve([])
+      (stop1 && stop1.id) ? fetchGtfsDepartures(stop1.id) : Promise.resolve([]),
+      (stop2 && stop2.id) ? fetchGtfsDepartures(stop2.id) : Promise.resolve([])
     ]);
 
     if (stop1){
