@@ -1,4 +1,3 @@
-
 OEX Static Web App – Azure Maps (v2 logo)
 ========================================
 
