@@ -651,11 +651,12 @@ svg.map-icon {
       .then(data => {
         const lookup = {};
         if (Array.isArray(data)){
-          // Schema: [{route_id, short_name, ...}]
+          // Array schema: [{route_id, short_name, ...}]
           data.forEach(r => { if (r.route_id && r.short_name) lookup[r.route_id] = r.short_name; });
         } else if (data && typeof data === 'object'){
-          // Alternate schema: {short_name: {agencyId, ...}} – store short_names as fallback keys
-          Object.keys(data).forEach(k => { lookup[k] = k; });
+          // Object schema: {route_id: short_name} (string values) produced by build-gtfs-data.js
+          // Fallback for old format: {short_name: {agencyId, ...}} (object values) – use key as short_name
+          Object.entries(data).forEach(([k, v]) => { lookup[k] = typeof v === 'string' ? v : k; });
         }
         _gtfsRouteLookup = lookup;
         _gtfsRoutesLoading = null;
@@ -726,7 +727,7 @@ svg.map-icon {
       const entries = depsWindow[stopId];
       if (!entries || !entries.length) return [];
       return entries.slice(0, 8).map(e => {
-        const label = routeLookup[e.route_id] || '';
+        const label = e.short_name || routeLookup[e.route_id] || '';
         const timeStr = (e.departure || e.arrival || '').substring(0, 5);
         return { name: label, time: timeStr };
       });
