@@ -727,7 +727,7 @@ svg.map-icon {
       const entries = depsWindow[stopId];
       if (!entries || !entries.length) return [];
       return entries.slice(0, 8).map(e => {
-        const label = e.short_name || routeLookup[e.route_id] || '';
+        const label = e.short_name || routeLookup[e.route_id] || e.route_id || '';
         const timeStr = (e.departure || e.arrival || '').substring(0, 5);
         return { name: label, time: timeStr };
       });
@@ -770,7 +770,7 @@ svg.map-icon {
           const entries = data[stopId];
           if (entries && entries.length){
             const e = entries[0];
-            const shortName = e.short_name || routeLookup[e.route_id] || '';
+            const shortName = e.short_name || routeLookup[e.route_id] || e.route_id || '';
             const timeStr = (e.departure || e.arrival || '').substring(0, 8);
             return { routeShortName: shortName, nextTime: timeStr };
           }
