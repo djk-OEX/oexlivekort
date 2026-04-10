@@ -935,18 +935,12 @@ svg.map-icon {
     }
   }
 
-  // Attach a click popup to a route-stop marker showing stop name, route, and departure time
-  function _attachRouteStopPopup(marker, stopName, routeName, departureTime){
-    function buildHtml(){
-      let h = '<div class="oex-bp-title">🚏 '+escapeHtml(stopName)+'</div>';
-      h += '<div class="oex-bp-dep">';
-      if (routeName) h += '<span class="oex-bp-line">'+escapeHtml(routeName)+'</span>';
-      if (departureTime) h += '<span class="oex-bp-time">'+escapeHtml(departureTime)+'</span>';
-      h += '</div>';
-      return h;
-    }
+  // Geographic deduplication threshold: stops within this distance (metres) are considered the same
+  const _STOP_PROXIMITY_THRESHOLD_METERS = 50;
 
-    function showPopup(e){
+  // Attach a click popup to a route-stop marker; fetches departure times on demand
+  function _attachRouteStopPopup(marker, stopName, routeName, stopId){
+    async function showPopup(e){
       e.stopPropagation();
       const mapWrap = document.querySelector('.map-wrap');
       if (!mapWrap) return;
@@ -955,7 +949,10 @@ svg.map-icon {
       const popup = document.createElement('div');
       popup.className = 'oex-busstop-popup';
       popup._oexMarker = marker;
-      popup.innerHTML = buildHtml();
+      // Show loading state immediately
+      let h = '<div class="oex-bp-title">🚏 '+escapeHtml(stopName)+'</div>';
+      if (routeName) h += '<div class="oex-bp-dep"><span class="oex-bp-line">'+escapeHtml(routeName)+'</span><span class="oex-bp-time"> …</span></div>';
+      popup.innerHTML = h;
       const markerEl = marker.getElement ? marker.getElement() : null;
       const wrapRect = mapWrap.getBoundingClientRect();
       if (markerEl){
@@ -967,6 +964,27 @@ svg.map-icon {
       }
       mapWrap.appendChild(popup);
       _busStopPopup = popup;
+      // Fetch real departure times and update popup
+      if (stopId){
+        try{
+          const deps = await fetchGtfsDepartures(stopId);
+          const depArr = Array.isArray(deps) ? deps : [];
+          const filtered = (routeName && depArr.length) ? depArr.filter(d => d.name === routeName) : depArr;
+          let hUp = '<div class="oex-bp-title">🚏 '+escapeHtml(stopName)+'</div>';
+          if (filtered && filtered.length){
+            filtered.slice(0, 5).forEach(d => {
+              hUp += '<div class="oex-bp-dep">';
+              if (d.name) hUp += '<span class="oex-bp-line">'+escapeHtml(d.name)+'</span>';
+              hUp += '<span class="oex-bp-time">'+escapeHtml(d.time)+'</span>';
+              hUp += '</div>';
+            });
+          } else {
+            if (routeName) hUp += '<div class="oex-bp-dep"><span class="oex-bp-line">'+escapeHtml(routeName)+'</span><span class="oex-bp-none"> – ingen afgange nu</span></div>';
+            else hUp += '<div class="oex-bp-none">Ingen afgange fundet</div>';
+          }
+          if (_busStopPopup === popup) popup.innerHTML = hUp;
+        }catch(_){}
+      }
     }
 
     function tryAttach(){
@@ -983,7 +1001,9 @@ svg.map-icon {
 
   // Find all stops sharing the next-departure route_id for the given stop,
   // then place small clickable pin markers on the map for each stop along the route.
-  async function _findAndShowRouteStops(stop1){
+  // shownStopIds: Set<string> – stop_ids already displayed (avoids duplicates across legs)
+  // shownPositions: Array<[lat,lon]> – positions already shown (avoids geographic duplicates)
+  async function _findAndShowRouteStops(stop1, shownStopIds, shownPositions){
     if (!stop1 || !stop1.stop_id) return;
     try{
       const [routeLookup, routeStopsData] = await Promise.all([
@@ -1028,14 +1048,30 @@ svg.map-icon {
       const stopIds = routeStopsData[internalRouteId];
       if (!stopIds || !stopIds.length) return;
 
-      // Place a small pin marker for each stop along the route (skip the A stop itself)
+      // Place a small pin marker for each stop along the route
+      // Skip: the originating stop itself, already-shown stop_ids, and geographically nearby stops
       for (const stopId of stopIds){
-        if (String(stopId) === String(stop1.stop_id)) continue;
-        const stopInfo = _gtfsStopMap.get(String(stopId));
+        const sid = String(stopId);
+        if (sid === String(stop1.stop_id)) continue;
+        if (shownStopIds && shownStopIds.has(sid)) continue;
+        const stopInfo = _gtfsStopMap.get(sid);
         if (!stopInfo) continue;
         const lat = stopInfo.lat;
         const lon = stopInfo.lon !== undefined ? stopInfo.lon : stopInfo.lng;
         if (!isValidLatLon(lat, lon)) continue;
+
+        // Geographic deduplication: skip stops within threshold of an already-shown stop
+        // (handles same physical stop having separate stop_ids per direction)
+        let tooClose = false;
+        if (shownPositions){
+          for (const [sLat, sLon] of shownPositions){
+            if (_haversineDist(lat, lon, sLat, sLon) < _STOP_PROXIMITY_THRESHOLD_METERS){ tooClose = true; break; }
+          }
+        }
+        if (tooClose) continue;
+
+        if (shownStopIds) shownStopIds.add(sid);
+        if (shownPositions) shownPositions.push([lat, lon]);
 
         const marker = new atlas.HtmlMarker({
           position: [lon, lat],
@@ -1043,7 +1079,7 @@ svg.map-icon {
         });
         map.markers.add(marker);
         busMarkers.push(marker);
-        _attachRouteStopPopup(marker, stopInfo.name || stopId, routeShortName, '');
+        _attachRouteStopPopup(marker, stopInfo.name || sid, routeShortName, sid);
       }
     }catch(e){ console.warn('_findAndShowRouteStops fejl:', e); }
   }
@@ -1176,8 +1212,16 @@ svg.map-icon {
     }
 
     showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2, nextDep1, nextDep2);
-    // Show route stops on map for the nearest stop at A (fire-and-forget)
-    if (stop1) _findAndShowRouteStops(stop1).catch(() => {});
+    // Show route stops on map for both legs (A→transfer and transfer→B), sequentially
+    // so the shared deduplication sets work correctly
+    ;(async () => {
+      const shownIds = new Set();
+      const shownPos = [];
+      if (stop1) shownIds.add(String(stop1.stop_id));
+      if (stop2) shownIds.add(String(stop2.stop_id));
+      if (stop1) await _findAndShowRouteStops(stop1, shownIds, shownPos);
+      if (stop2) await _findAndShowRouteStops(stop2, shownIds, shownPos);
+    })().catch(() => {});
   }
 
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; clearBusDisplay(); updateMapFromForm(false); }
