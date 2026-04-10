@@ -935,6 +935,9 @@ svg.map-icon {
     }
   }
 
+  // Geographic deduplication threshold: stops within this distance (metres) are considered the same
+  const _STOP_PROXIMITY_THRESHOLD_METERS = 50;
+
   // Attach a click popup to a route-stop marker; fetches departure times on demand
   function _attachRouteStopPopup(marker, stopName, routeName, stopId){
     async function showPopup(e){
@@ -965,7 +968,8 @@ svg.map-icon {
       if (stopId){
         try{
           const deps = await fetchGtfsDepartures(stopId);
-          const filtered = (routeName && deps.length) ? deps.filter(d => d.name === routeName) : deps;
+          const depArr = Array.isArray(deps) ? deps : [];
+          const filtered = (routeName && depArr.length) ? depArr.filter(d => d.name === routeName) : depArr;
           let hUp = '<div class="oex-bp-title">🚏 '+escapeHtml(stopName)+'</div>';
           if (filtered && filtered.length){
             filtered.slice(0, 5).forEach(d => {
@@ -975,7 +979,7 @@ svg.map-icon {
               hUp += '</div>';
             });
           } else {
-            if (routeName) hUp += '<div class="oex-bp-dep"><span class="oex-bp-line">'+escapeHtml(routeName)+'</span><span class="oex-bp-none" style="color:#bbbbbb;font-size:11px;"> – ingen afgange nu</span></div>';
+            if (routeName) hUp += '<div class="oex-bp-dep"><span class="oex-bp-line">'+escapeHtml(routeName)+'</span><span class="oex-bp-none"> – ingen afgange nu</span></div>';
             else hUp += '<div class="oex-bp-none">Ingen afgange fundet</div>';
           }
           if (_busStopPopup === popup) popup.innerHTML = hUp;
@@ -1056,12 +1060,12 @@ svg.map-icon {
         const lon = stopInfo.lon !== undefined ? stopInfo.lon : stopInfo.lng;
         if (!isValidLatLon(lat, lon)) continue;
 
-        // Geographic deduplication: skip stops within 50 m of an already-shown stop
+        // Geographic deduplication: skip stops within threshold of an already-shown stop
         // (handles same physical stop having separate stop_ids per direction)
         let tooClose = false;
         if (shownPositions){
           for (const [sLat, sLon] of shownPositions){
-            if (_haversineDist(lat, lon, sLat, sLon) < 50){ tooClose = true; break; }
+            if (_haversineDist(lat, lon, sLat, sLon) < _STOP_PROXIMITY_THRESHOLD_METERS){ tooClose = true; break; }
           }
         }
         if (tooClose) continue;
