@@ -305,6 +305,7 @@ svg.map-icon {
   let routeStopMarkers = [];
   let _busStopPopup = null;
   let _routeDotsVisible = false;
+  let _activeLegIdx = null;  // tracks which leg's route dots are currently shown
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -679,6 +680,7 @@ svg.map-icon {
     busMarkers = [];
     _clearRouteStopDots();
     _routeDotsVisible = false;
+    _activeLegIdx = null;
     _closeBusStopPopup();
     const panel = document.getElementById('oex-transit-panel');
     if (panel) panel.remove();
@@ -777,6 +779,7 @@ svg.map-icon {
   let _depsCacheKey = null;         // currently cached departure slot key
   let _depsCacheData = null;        // currently cached departure file data
   let _gtfsStopMap = null;          // stop_id → stop object (built lazily)
+  let _gtfsStopToRoutes = null;     // stop_id → Set<internal_route_id> (built lazily)
 
   async function loadGtfsStops(){
     if (_gtfsStops) return _gtfsStops;
@@ -960,6 +963,21 @@ svg.map-icon {
     }
   }
 
+  // Build reverse index: stop_id → Set<internal_route_id> from route_stops data
+  function _ensureStopToRoutes(){
+    if (_gtfsStopToRoutes) return;
+    _gtfsStopToRoutes = new Map();
+    if (_gtfsRouteStops){
+      for (const [routeId, stopIds] of Object.entries(_gtfsRouteStops)){
+        stopIds.forEach(sid => {
+          const key = String(sid);
+          if (!_gtfsStopToRoutes.has(key)) _gtfsStopToRoutes.set(key, new Set());
+          _gtfsStopToRoutes.get(key).add(routeId);
+        });
+      }
+    }
+  }
+
   // Geographic deduplication threshold: stops within this distance (metres) are considered the same
   const _STOP_PROXIMITY_THRESHOLD_METERS = 50;
 
@@ -1028,7 +1046,8 @@ svg.map-icon {
   // then place small clickable pin markers on the map for each stop along the route.
   // shownStopIds: Set<string> – stop_ids already displayed (avoids duplicates across legs)
   // shownPositions: Array<[lat,lon]> – positions already shown (avoids geographic duplicates)
-  async function _findAndShowRouteStops(stop1, shownStopIds, shownPositions){
+  // forcedTripId: optional trip_id to use directly instead of scanning for next departure
+  async function _findAndShowRouteStops(stop1, shownStopIds, shownPositions, forcedTripId){
     if (!stop1 || !stop1.stop_id) return;
     try{
       const [routeLookup, routeStopsData] = await Promise.all([
@@ -1038,6 +1057,10 @@ svg.map-icon {
       await loadGtfsStops();
       _ensureGtfsStopMap();
 
+      let tripId = forcedTripId || null;
+      let routeShortName = '';
+
+      if (!tripId){
       // Find the soonest departure at stop1 to identify which route is next
       const currentKey = _getDepartureSlotKey();
       const allKeys = _getDaySlotKeys();
@@ -1046,8 +1069,6 @@ svg.map-icon {
         ? [...allKeys.slice(currentIdx), ...allKeys.slice(0, currentIdx)]
         : allKeys;
 
-      let tripId = null;
-      let routeShortName = '';
       const MAX_CHECKS = 60; // up to 60 × 5-min slots = 5 hours ahead
       let checked = 0;
       for (const key of ordered){
@@ -1066,6 +1087,8 @@ svg.map-icon {
           }
         }catch(_){ continue; }
       }
+      } // end if (!forcedTripId)
+      if (tripId && !routeShortName) routeShortName = routeLookup[tripId] || tripId || '';
       if (!tripId) return;
 
       // Map trip_id → internal route_id, then look up all stops for that route
@@ -1109,56 +1132,161 @@ svg.map-icon {
     }catch(e){ console.warn('_findAndShowRouteStops fejl:', e); }
   }
 
-  function _renderRouteList(deps){
-    if (!deps || !deps.length) return '<div class="oex-tp-deps"><div class="oex-tp-dep" style="color:#bbbbbb;font-size:12px;">Ingen afgange i dette tidsvindue</div></div>';
+  // Given stop1 (nearest to A) and stop2 (nearest to B), determines the bus legs:
+  // - Single leg if stop2 is on the same route as stop1 (direct route)
+  // - Two legs if a transfer stop is found (route1 → transfer → route2 → stop2)
+  // - Falls back to two independent legs if no connection is found
+  // Returns array of leg objects: { stop, routeShortName, tripId, internalRouteId, isTransfer? }
+  async function findTransitLegs(stop1, stop2){
+    if (!stop1) return [];
+    try{
+      const [routeLookup, routeStopsData] = await Promise.all([
+        loadGtfsRoutes(),
+        loadGtfsRouteStops()
+      ]);
+      _ensureStopToRoutes();
+
+      const slotKey = _getDepartureSlotKey();
+      const depsWindow = await _loadDepartureWindow(slotKey);
+
+      // Helper: get first dep entry for a stop in the current (or next found) window
+      const getFirstDep = async (stopId) => {
+        const sid = String(stopId);
+        const entries = depsWindow[sid];
+        if (entries && entries.length) return entries[0];
+        // Scan next slots (up to 60) to find first available departure
+        const allKeys = _getDaySlotKeys();
+        const curIdx = allKeys.indexOf(slotKey);
+        const ordered = curIdx >= 0 ? [...allKeys.slice(curIdx+1), ...allKeys.slice(0, curIdx+1)] : allKeys;
+        for (let i = 0; i < Math.min(60, ordered.length); i++){
+          try{
+            const r = await fetch('data/departures_5min/'+ordered[i]+'.json');
+            if (!r.ok) continue;
+            const d = await r.json();
+            if (d[sid] && d[sid].length) return d[sid][0];
+          }catch(_){}
+        }
+        return null;
+      };
+
+      const e1 = await getFirstDep(stop1.stop_id);
+      const tripId1 = e1 ? e1.route_id : null;
+      const shortName1 = e1 ? (e1.short_name || routeLookup[tripId1] || tripId1 || '') : '';
+      const internalRoute1 = tripId1 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId1]) || tripId1) : null;
+      const leg1 = { stop: stop1, routeShortName: shortName1, tripId: tripId1, internalRouteId: internalRoute1 };
+
+      if (!stop2) return [leg1];
+
+      const stop2Id = String(stop2.stop_id);
+      const stopsOnRoute1 = internalRoute1 ? (routeStopsData[internalRoute1] || []) : [];
+
+      // Direct route: stop2 is already on route1
+      if (internalRoute1 && stopsOnRoute1.some(s => String(s) === stop2Id)){
+        return [leg1];
+      }
+
+      // Find transfer: look for a stop on route1 that is also served by a route that serves stop2
+      if (internalRoute1 && stopsOnRoute1.length){
+        const routesAtStop2 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
+        for (const stopId of stopsOnRoute1){
+          const sid = String(stopId);
+          if (sid === String(stop1.stop_id) || sid === stop2Id) continue;
+          const routesAtSid = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid) || new Set()) : new Set();
+          // Find a route that serves both this intermediate stop and stop2
+          let transferRouteId = null;
+          for (const r of routesAtSid){
+            if (routesAtStop2.has(r)){ transferRouteId = r; break; }
+          }
+          if (!transferRouteId) continue;
+
+          // Found transfer stop; look up stop info
+          await loadGtfsStops();
+          _ensureGtfsStopMap();
+          const stopInfo = _gtfsStopMap.get(sid);
+          if (!stopInfo) continue;
+          const transferStop = {
+            stop_id: sid,
+            name: stopInfo.name || sid,
+            lat: stopInfo.lat,
+            lon: stopInfo.lon !== undefined ? stopInfo.lon : stopInfo.lng,
+            dist: 0
+          };
+
+          // Get the trip_id for the leg-2 bus at the transfer stop
+          const e2 = await getFirstDep(sid);
+          // Prefer a departure on transferRouteId
+          const entries2win = depsWindow[sid] || [];
+          const matchEntry = entries2win.find(e => {
+            const ir = (_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id;
+            return ir === transferRouteId;
+          });
+          const leg2Entry = matchEntry || e2;
+          const tripId2 = leg2Entry ? leg2Entry.route_id : null;
+          const ir2 = tripId2 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId2]) || tripId2) : transferRouteId;
+          const shortName2 = leg2Entry ? (leg2Entry.short_name || routeLookup[tripId2] || tripId2 || '') : (routeLookup[transferRouteId] || transferRouteId || '');
+
+          const leg2 = { stop: transferStop, routeShortName: shortName2, tripId: tripId2, internalRouteId: ir2, isTransfer: true };
+          return [leg1, leg2];
+        }
+      }
+
+      // No transfer found – show stop1 and stop2 as independent legs
+      const e2 = await getFirstDep(stop2.stop_id);
+      const tripId2 = e2 ? e2.route_id : null;
+      const shortName2 = e2 ? (e2.short_name || routeLookup[tripId2] || tripId2 || '') : '';
+      const internalRoute2 = tripId2 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId2]) || tripId2) : null;
+      return [leg1, { stop: stop2, routeShortName: shortName2, tripId: tripId2, internalRouteId: internalRoute2 }];
+
+    }catch(e){ console.warn('findTransitLegs fejl:', e); return [{ stop: stop1, routeShortName: null, tripId: null, internalRouteId: null }]; }
+  }
+
+  function _renderRouteList(deps, filterName){
+    const filtered = (filterName && deps && deps.length) ? deps.filter(d => d.name === filterName) : (deps || []);
+    if (!filtered.length) return '<div class="oex-tp-deps"><div class="oex-tp-dep" style="color:#bbbbbb;font-size:12px;">Ingen afgange i dette tidsvindue</div></div>';
     let html = '<div class="oex-tp-deps">';
-    deps.forEach(d => {
-      const label = d.name ? escapeHtml(d.name) + ' · ' + escapeHtml(d.time) : escapeHtml(d.time);
-      html += '<div class="oex-tp-dep">'+
-        '<span class="oex-tp-dep-line">'+label+'</span>'+
-        '</div>';
+    filtered.slice(0, 5).forEach(d => {
+      html += '<div class="oex-tp-dep">';
+      if (d.name) html += '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>';
+      html += '<span class="oex-tp-dep-time">'+escapeHtml(d.time)+'</span>';
+      html += '</div>';
     });
     html += '</div>';
     return html;
   }
 
-  // nextDep1 / nextDep2 are { routeShortName, nextTime } or null
-  function showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2, nextDep1, nextDep2){
+  // legs: array of { stop, routeShortName, deps, nextDep, isTransfer? }
+  // Each leg gets its own section with bus line badge, stop info, departures and a clickable "Næste afgang" row
+  function showTransitPanel(legs, hasB){
     const existing = document.getElementById('oex-transit-panel');
     if (existing) existing.remove();
+    if (!legs || !legs.length) return;
     const panel = document.createElement('div');
     panel.id = 'oex-transit-panel';
-    let html = '<div class="oex-tp-title">🚌 Nærmeste busstop</div>';
-    // Show route short name when current window has no departures
-    const anyNoDeps = (stop1 && (!deps1 || !deps1.length)) || (stop2 && (!deps2 || !deps2.length));
-    const routeShortName = (nextDep1 && nextDep1.routeShortName) || (nextDep2 && nextDep2.routeShortName) || '';
-    if (anyNoDeps && routeShortName){
-      html += '<div class="oex-tp-routename" style="font-size:18px;font-weight:700;color:#00B0F8;margin:4px 0 6px 0;">'+escapeHtml(routeShortName)+'</div>';
-    }
-    if (stop1){
-      html += '<div class="oex-tp-row"><strong>Fra A:</strong> '+escapeHtml(stop1.name)+'</div>';
-      html += '<div class="oex-tp-row" style="color:#bbbbbb;font-size:12px;">'+stop1.dist+' m til fods</div>';
-      html += _renderRouteList(deps1);
-    } else {
-      html += '<div class="oex-tp-row" style="color:#bbbbbb;">Ingen busstop fundet inden for 800 m fra A</div>';
-    }
-    if (hasB){
-      if (stop2){
-        html += '<div class="oex-tp-row" style="margin-top:6px;"><strong>Til B:</strong> '+escapeHtml(stop2.name)+'</div>';
-        html += '<div class="oex-tp-row" style="color:#bbbbbb;font-size:12px;">'+stop2.dist+' m til fods</div>';
-        html += _renderRouteList(deps2);
-      } else {
-        html += '<div class="oex-tp-row" style="color:#bbbbbb;margin-top:6px;">Ingen busstop fundet inden for 800 m fra B</div>';
+    let html = '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
+
+    legs.forEach((leg, i) => {
+      const stop = leg.stop;
+      if (!stop) return;
+      const isFirst = i === 0;
+      const isTransfer = !!leg.isTransfer;
+      const lineBadge = leg.routeShortName ? '<span class="oex-tp-dep-line" style="font-size:15px;padding:2px 8px;">'+escapeHtml(leg.routeShortName)+'</span>' : '';
+      const stopLabel = isFirst ? 'Fra A' : (isTransfer ? 'Skift' : 'Til B');
+      const distText = stop.dist ? ' <span style="color:#bbbbbb;font-size:11px;">('+stop.dist+' m til fods)</span>' : '';
+
+      html += '<div class="oex-tp-leg" style="margin-top:'+(isFirst?'4':'10')+'px;padding-top:'+(isFirst?'0':'8')+'px;'+(isFirst?'':'border-top:1px solid #333;')+'">';
+      html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;">'+lineBadge+
+        '<span style="font-size:12px;"><strong>'+stopLabel+':</strong> '+escapeHtml(stop.name)+distText+'</span></div>';
+      html += _renderRouteList(leg.deps, leg.routeShortName);
+
+      // Always show clickable "Næste afgang" row
+      const nextTime = (leg.nextDep && leg.nextDep.nextTime) ||
+                       (leg.deps && leg.deps.length && leg.deps[0].time) || null;
+      if (nextTime){
+        html += '<div id="oex-next-dep-row-'+i+'" class="oex-tp-row oex-next-dep-btn" title="Klik for at vise/skjule stoppesteder på kortet">🚌 Næste afgang: '+escapeHtml(nextTime)+'</div>';
       }
-    }
-    // Show next departure time when current window has no departures
-    if (anyNoDeps){
-      const times = [nextDep1 && nextDep1.nextTime, nextDep2 && nextDep2.nextTime].filter(Boolean);
-      if (times.length){
-        times.sort();
-        html += '<div id="oex-next-dep-row" class="oex-tp-row oex-next-dep-btn" title="Klik for at vise/skjule stoppesteder på kortet">🚌 Næste afgang: '+escapeHtml(times[0])+'</div>';
-      }
-    }
+      html += '</div>';
+    });
+
     panel.innerHTML = html;
     const mapWrap = document.querySelector('.map-wrap');
     if (mapWrap) mapWrap.appendChild(panel);
@@ -1176,31 +1304,64 @@ svg.map-icon {
       hasB ? findNearestGtfsStop(lat2, lng2) : Promise.resolve(null)
     ]);
 
-    const [deps1, deps2] = await Promise.all([
-      (stop1 && stop1.stop_id) ? fetchGtfsDepartures(stop1.stop_id) : Promise.resolve([]),
-      (stop2 && stop2.stop_id) ? fetchGtfsDepartures(stop2.stop_id) : Promise.resolve([])
-    ]);
+    // Determine legs (direct route or with transfer)
+    const legs = await findTransitLegs(stop1, hasB ? stop2 : null);
 
-    const [nextDep1, nextDep2] = await Promise.all([
-      (stop1 && stop1.stop_id && (!deps1 || !deps1.length)) ? fetchNextGtfsDeparture(stop1.stop_id) : Promise.resolve(null),
-      (stop2 && stop2.stop_id && (!deps2 || !deps2.length)) ? fetchNextGtfsDeparture(stop2.stop_id) : Promise.resolve(null)
-    ]);
+    // Fetch departures and nextDep for each leg
+    for (const leg of legs){
+      if (leg.stop && leg.stop.stop_id){
+        const allDeps = await fetchGtfsDepartures(leg.stop.stop_id);
+        // Filter to this leg's bus line when known
+        if (leg.routeShortName && allDeps && allDeps.length){
+          const filtered = allDeps.filter(d => d.name === leg.routeShortName);
+          leg.deps = filtered.length ? filtered : allDeps;
+        } else {
+          leg.deps = allDeps;
+        }
+        if (!leg.deps || !leg.deps.length){
+          leg.nextDep = await fetchNextGtfsDeparture(leg.stop.stop_id);
+        } else {
+          leg.nextDep = { routeShortName: leg.routeShortName || (leg.deps[0] && leg.deps[0].name) || '', nextTime: leg.deps[0].time };
+        }
+      }
+    }
 
+    // Add 🚌 A marker for leg-1 stop (nearest to A)
     if (stop1){
       const m = new atlas.HtmlMarker({
         position: [stop1.lon, stop1.lat],
         htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 A</div>'
       });
       map.markers.add(m); busMarkers.push(m);
-      _attachBusStopPopup(m, stop1, deps1, nextDep1);
+      const l1 = legs[0] || {};
+      _attachBusStopPopup(m, stop1, l1.deps || [], l1.nextDep || null);
     }
+    // Add 🚌 T marker for transfer stop (leg 2 when isTransfer)
+    if (legs.length >= 2 && legs[1].isTransfer && legs[1].stop && isValidLatLon(legs[1].stop.lat, legs[1].stop.lon)){
+      const ts = legs[1].stop;
+      const mt = new atlas.HtmlMarker({
+        position: [ts.lon, ts.lat],
+        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 ⇄</div>'
+      });
+      map.markers.add(mt); busMarkers.push(mt);
+      _attachBusStopPopup(mt, ts, legs[1].deps || [], legs[1].nextDep || null);
+    }
+    // Add 🚌 B marker for nearest stop to B
     if (stop2){
       const m = new atlas.HtmlMarker({
         position: [stop2.lon, stop2.lat],
         htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 B</div>'
       });
       map.markers.add(m); busMarkers.push(m);
-      _attachBusStopPopup(m, stop2, deps2, nextDep2);
+      // For marker popup: use leg2 deps if transfer, else fetch stop2 deps
+      const l2 = (legs.length >= 2 && !legs[1].isTransfer) ? legs[1] : null;
+      if (l2 && l2.deps){
+        _attachBusStopPopup(m, stop2, l2.deps, l2.nextDep || null);
+      } else {
+        const d2 = await fetchGtfsDepartures(stop2.stop_id);
+        const nd2 = (!d2 || !d2.length) ? await fetchNextGtfsDeparture(stop2.stop_id) : null;
+        _attachBusStopPopup(m, stop2, d2, nd2);
+      }
     }
 
     if (hasA && hasB){
@@ -1215,8 +1376,8 @@ svg.map-icon {
           const data = await res.json();
           const route = (((data||{}).routes||[])[0]||{});
           let coords = [];
-          const legs = route.legs || [];
-          legs.forEach(leg=>{ (leg.points||[]).forEach(p=>{ if(isValidLatLon(p.latitude, p.longitude)){ coords.push([p.longitude,p.latitude]); } }); });
+          const routeLegs = route.legs || [];
+          routeLegs.forEach(leg=>{ (leg.points||[]).forEach(p=>{ if(isValidLatLon(p.latitude, p.longitude)){ coords.push([p.longitude,p.latitude]); } }); });
           if (coords.length >= 2){
             routeSource.add(new atlas.data.Feature(new atlas.data.LineString(coords)));
             const summary = route.summary || {};
@@ -1236,29 +1397,39 @@ svg.map-icon {
       }catch(e){ console.warn('Bus route fejl (forventet):', e); }
     }
 
-    showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2, nextDep1, nextDep2);
-    // Route stop dots are shown only when the user clicks "Næste afgang" in the panel
-    const nextDepEl = document.getElementById('oex-next-dep-row');
-    if (nextDepEl) {
-      nextDepEl.addEventListener('click', async function(e) {
-        e.stopPropagation();
-        if (_routeDotsVisible) {
+    showTransitPanel(legs, hasB);
+
+    // Attach per-leg "Næste afgang" click handlers (toggle route stop dots for that leg)
+    _activeLegIdx = null;
+    legs.forEach((leg, i) => {
+      const el = document.getElementById('oex-next-dep-row-'+i);
+      if (!el) return;
+      el.addEventListener('click', async function(ev) {
+        ev.stopPropagation();
+        if (_activeLegIdx === i){
+          // Toggle off
           _clearRouteStopDots();
           _routeDotsVisible = false;
-          nextDepEl.classList.remove('active');
+          _activeLegIdx = null;
+          el.classList.remove('active');
         } else {
+          // Switch to this leg
+          _clearRouteStopDots();
+          legs.forEach((_, j) => {
+            const prev = document.getElementById('oex-next-dep-row-'+j);
+            if (prev) prev.classList.remove('active');
+          });
+          _activeLegIdx = i;
           _routeDotsVisible = true;
-          nextDepEl.classList.add('active');
-          // Use separate shownStopIds per leg so both legs show their stops;
-          // share shownPositions for geographic deduplication across legs.
+          el.classList.add('active');
           try {
             const shownPos = [];
-            if (stop1) await _findAndShowRouteStops(stop1, new Set([String(stop1.stop_id)]), shownPos);
-            if (stop2) await _findAndShowRouteStops(stop2, new Set([String(stop2.stop_id)]), shownPos);
-          } catch(e) { console.warn('Route dots fejl:', e); }
+            const shownIds = new Set([String(leg.stop.stop_id)]);
+            await _findAndShowRouteStops(leg.stop, shownIds, shownPos, leg.tripId);
+          } catch(err) { console.warn('Route dots fejl:', err); }
         }
       });
-    }
+    });
   }
 
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; clearBusDisplay(); updateMapFromForm(false); }
