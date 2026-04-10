@@ -986,7 +986,7 @@ svg.map-icon {
       let routeId = null;
       let routeShortName = '';
       let activeWindow = null;
-      const MAX_CHECKS = 60;
+      const MAX_CHECKS = 60; // up to 60 × 5-min slots = 5 hours ahead
       let checked = 0;
       for (const key of ordered){
         if (checked >= MAX_CHECKS) break;
