@@ -628,7 +628,7 @@ svg.map-icon {
   // ── GTFS local stop lookup ──────────────────────────────────────────────────
   let _gtfsStops = null;
   let _gtfsStopsLoading = null;
-  let _gtfsRouteLookup = null;      // departure route_id → short_name (via trips_by_id + routes)
+  let _gtfsRouteLookup = null;      // departure route_id → route_short_name (via trips_by_id + routes)
   let _gtfsRoutesLoading = null;
   let _depsCacheKey = null;         // currently cached departure slot key
   let _depsCacheData = null;        // currently cached departure file data
@@ -667,8 +667,8 @@ svg.map-icon {
             if (shortName) lookup[depRouteId] = shortName;
           });
         }
-        // Also add direct entries from routeMap as fallback
-        Object.assign(lookup, routeMap);
+        // Also add direct entries from routeMap as fallback (only if not already mapped via trips_by_id)
+        Object.entries(routeMap).forEach(([k, v]) => { if (!(k in lookup)) lookup[k] = v; });
         _gtfsRouteLookup = lookup;
         _gtfsRoutesLoading = null;
         return _gtfsRouteLookup;
