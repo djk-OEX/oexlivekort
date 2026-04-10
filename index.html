@@ -1212,15 +1212,43 @@ svg.map-icon {
             dist: 0
           };
 
-          // Use transferRouteId directly for leg2 – it is the internal route id we already identified,
-          // so derive shortName and route-stop-dots from it rather than from whatever departure
-          // happens to be first at the transfer stop (which could belong to a different route).
-          const ir2 = transferRouteId;
-          const shortName2 = routeLookup[transferRouteId] || transferRouteId || '';
-          // tripId2 is the internal route id so _findAndShowRouteStops resolves the correct stop list
-          const tripId2 = transferRouteId;
+          // Find an actual trip departure for the transfer route at the transfer stop,
+          // starting from leg1's departure time so the two legs are independently timed.
+          const leg1HHMM = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
+          const allSlotKeys = _getDaySlotKeys();
+          let slotStart = 0;
+          if (leg1HHMM.length >= 5) {
+            // Convert HH:MM to the nearest 5-min slot key (HH_MM)
+            const slotKey2 = leg1HHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(leg1HHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
+            const ki = allSlotKeys.indexOf(slotKey2);
+            if (ki >= 0) slotStart = ki;
+          }
+          const orderedSlots = [...allSlotKeys.slice(slotStart), ...allSlotKeys.slice(0, slotStart)];
+          let e2 = null;
+          // Search up to 96 slots = 8 hours of 5-min windows
+          for (let ki2 = 0; ki2 < Math.min(96, orderedSlots.length) && !e2; ki2++) {
+            try {
+              const r2 = await fetch('data/departures_5min/' + orderedSlots[ki2] + '.json');
+              if (!r2.ok) continue;
+              const dat2 = await r2.json();
+              const ents2 = dat2[String(sid)];
+              if (ents2 && ents2.length) {
+                for (const ent2 of ents2) {
+                  const resolvedRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
+                  if (resolvedRouteId === transferRouteId) { e2 = ent2; break; }
+                }
+              }
+            } catch(_r2) { /* network/parse error – try next slot */ }
+          }
+          // Use the real trip_id from the departure entry so both shortName lookup
+          // and _findAndShowRouteStops (route dots) resolve correctly via _gtfsTripToRoute.
+          const tripId2 = e2 ? e2.route_id : transferRouteId;
+          const shortName2 = e2
+            ? (e2.short_name || routeLookup[e2.route_id] || routeLookup[transferRouteId] || transferRouteId || '')
+            : (routeLookup[transferRouteId] || transferRouteId || '');
+          const leg2DepTime = e2 ? (e2.departure || e2.arrival || '').substring(0, 5) : '';
 
-          const leg2 = { stop: transferStop, routeShortName: shortName2, tripId: tripId2, internalRouteId: ir2, isTransfer: true };
+          const leg2 = { stop: transferStop, routeShortName: shortName2, tripId: tripId2, internalRouteId: transferRouteId, isTransfer: true, scheduledDepTime: leg2DepTime };
           return [leg1, leg2];
         }
       }
@@ -1313,7 +1341,16 @@ svg.map-icon {
         } else {
           leg.deps = allDeps;
         }
-        if (!leg.deps || !leg.deps.length){
+        // For transfer legs: use the pre-calculated departure for the connecting route
+        // so the panel always shows the correct route/time and the "Næste afgang" button appears.
+        if (leg.isTransfer && leg.scheduledDepTime) {
+          const schedEntry = { name: leg.routeShortName, time: leg.scheduledDepTime };
+          const hasRouteInDeps = leg.deps && leg.deps.some(d => d.name === leg.routeShortName);
+          if (!hasRouteInDeps) {
+            leg.deps = leg.deps && leg.deps.length ? [schedEntry, ...leg.deps] : [schedEntry];
+          }
+          leg.nextDep = { routeShortName: leg.routeShortName, nextTime: leg.scheduledDepTime };
+        } else if (!leg.deps || !leg.deps.length){
           leg.nextDep = await fetchNextGtfsDeparture(leg.stop.stop_id);
         } else {
           leg.nextDep = { routeShortName: leg.routeShortName || (leg.deps[0] && leg.deps[0].name) || '', nextTime: leg.deps[0].time };
