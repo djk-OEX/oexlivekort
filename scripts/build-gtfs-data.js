@@ -5,9 +5,10 @@
  * Pre-processer GTFS-data for Danmark til kompakte JSON-filer:
  *   data/stops.json            – alle busstop: [{id, name, lat, lng}, ...]
  *   data/stop_routes.json      – stop_id → ruter: {"851459100": [{"line":"1A","headsigns":["Vanløse"]}, ...], ...}
- *   data/routes.json           – route_id → short_name: {"102785-12345": "2A", ...}
+ *   data/routes.json           – ruter: [{route_id, route_short_name, route_long_name}, ...]
  *   data/route_stops.json      – route_id → stop-id-liste: {"102785-25895_4": ["stop1","stop2",...], ...}
- *   data/departures_5min/*.json – 5-min afgangsvinduer: {"stop_id": [{route_id, short_name, arrival, departure}, ...], ...}
+ *   data/trips_headsign.json   – trip_id → headsign (retningsskilt): {"trip123": "Aalborg", ...}
+ *   data/departures_5min/*.json – 5-min afgangsvinduer: {"stop_id": [{route_id, short_name, headsign?, arrival, departure}, ...], ...}
  *
  * Brug:
  *   node scripts/build-gtfs-data.js /sti/til/gtfs-mappe
@@ -137,14 +138,25 @@ async function main() {
   const routesText = reader.readFile('routes.txt');
   if (!routesText) { console.warn('routes.txt ikke fundet – stop_routes.json springes over'); return; }
   const routeRows = parseCSV(routesText);
-  // route_id → short_name
+  // route_id → short_name (for internal lookups)
   const routeMap = {};
-  routeRows.forEach(r => { routeMap[r.route_id] = r.route_short_name || r.route_long_name || r.route_id; });
+  // route_id → long_name
+  const routeLongMap = {};
+  routeRows.forEach(r => {
+    routeMap[r.route_id] = r.route_short_name || r.route_long_name || r.route_id;
+    routeLongMap[r.route_id] = r.route_long_name || '';
+  });
 
-  // Gem route_id → short_name opslag til data/routes.json
+  // Gem route_id → {route_short_name, route_long_name} som array til data/routes.json
+  // (Understøtter både kort og lang navn; kompatibel med loadGtfsRoutes() array-format)
+  const routesJsonArray = routeRows.map(r => ({
+    route_id:         r.route_id,
+    route_short_name: r.route_short_name || '',
+    route_long_name:  r.route_long_name  || ''
+  }));
   const routesJsonFile = path.join(outDir, 'routes.json');
-  fs.writeFileSync(routesJsonFile, JSON.stringify(routeMap));
-  console.log(`  → ${Object.keys(routeMap).length} ruter skrevet til ${routesJsonFile}`);
+  fs.writeFileSync(routesJsonFile, JSON.stringify(routesJsonArray));
+  console.log(`  → ${routesJsonArray.length} ruter skrevet til ${routesJsonFile}`);
 
   console.log('Behandler trips.txt ...');
   const tripsText = reader.readFile('trips.txt');
@@ -155,6 +167,13 @@ async function main() {
   tripRows.forEach(t => {
     tripMap[t.trip_id] = { routeId: t.route_id, headsign: t.trip_headsign || '' };
   });
+
+  // Gem trip_id → headsign til data/trips_headsign.json (bruges af frontend til retningsvisning)
+  const tripsHeadsignOut = {};
+  tripRows.forEach(t => { if (t.trip_headsign) tripsHeadsignOut[t.trip_id] = t.trip_headsign; });
+  const tripsHeadsignFile = path.join(outDir, 'trips_headsign.json');
+  fs.writeFileSync(tripsHeadsignFile, JSON.stringify(tripsHeadsignOut));
+  console.log(`  → ${Object.keys(tripsHeadsignOut).length} headsigns skrevet til ${tripsHeadsignFile}`);
 
   console.log('Behandler stop_times.txt ... (kan tage lidt tid)');
   const stopTimesText = reader.readFile('stop_times.txt');
@@ -220,12 +239,14 @@ async function main() {
         const slotKey = String(h).padStart(2, '0') + '_' + String(slotMin).padStart(2, '0');
         if (!departureSlots[slotKey]) departureSlots[slotKey] = {};
         if (!departureSlots[slotKey][stopId]) departureSlots[slotKey][stopId] = [];
-        departureSlots[slotKey][stopId].push({
+        const entry = {
           route_id:   trip.routeId,
           short_name: lineName,
           arrival:    arrTime,
           departure:  depTime
-        });
+        };
+        if (trip.headsign) entry.headsign = trip.headsign;
+        departureSlots[slotKey][stopId].push(entry);
       }
     }
 

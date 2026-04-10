@@ -704,6 +704,7 @@ svg.map-icon {
         deps.slice(0, 6).forEach(d => {
           h += '<div class="oex-bp-dep">';
           if (d.name) h += '<span class="oex-bp-line">'+escapeHtml(d.name)+'</span>';
+          if (d.dir)  h += '<span class="oex-bp-time" style="font-size:11px;color:#e0e0e0;">→ '+escapeHtml(d.dir)+'</span>';
           h += '<span class="oex-bp-time">'+escapeHtml(d.time)+'</span>';
           h += '</div>';
         });
@@ -772,7 +773,9 @@ svg.map-icon {
   let _gtfsStops = null;
   let _gtfsStopsLoading = null;
   let _gtfsRouteLookup = null;      // departure route_id → route_short_name (via trips_by_id + routes)
+  let _gtfsRouteLongLookup = null;  // internal route_id → route_long_name
   let _gtfsTripToRoute = null;      // departure route_id (trip_id) → internal route_id
+  let _gtfsTripHeadsign = null;     // trip_id → headsign (from trips_headsign.json, optional)
   let _gtfsRoutesLoading = null;
   let _gtfsRouteStops = null;       // internal route_id → [stop_ids]
   let _gtfsRouteStopsLoading = null;
@@ -796,14 +799,19 @@ svg.map-icon {
     if (_gtfsRoutesLoading) return _gtfsRoutesLoading;
     _gtfsRoutesLoading = Promise.all([
       fetch('data/routes.json').then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }),
-      fetch('data/trips_by_id.json').then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }).catch(() => ({}))
+      fetch('data/trips_by_id.json').then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }).catch(() => ({})),
+      fetch('data/trips_headsign.json').then(r => r.ok ? r.json() : {}).catch(() => ({}))
     ])
-      .then(([routesData, tripsData]) => {
-        // Build internal route_id → short_name from routes.json
+      .then(([routesData, tripsData, headsignData]) => {
+        // Build internal route_id → short_name and route_id → long_name from routes.json
         const routeMap = {};
+        const longMap = {};
         if (Array.isArray(routesData)){
           // Array schema: [{route_id, route_short_name, route_long_name}]
-          routesData.forEach(r => { if (r.route_id && r.route_short_name) routeMap[r.route_id] = r.route_short_name; });
+          routesData.forEach(r => {
+            if (r.route_id && r.route_short_name) routeMap[r.route_id] = r.route_short_name;
+            if (r.route_id && r.route_long_name)  longMap[r.route_id]  = r.route_long_name;
+          });
         } else if (routesData && typeof routesData === 'object'){
           Object.entries(routesData).forEach(([k, v]) => { routeMap[k] = typeof v === 'string' ? v : k; });
         }
@@ -818,12 +826,15 @@ svg.map-icon {
         // Also add direct entries from routeMap as fallback (only if not already mapped via trips_by_id)
         Object.entries(routeMap).forEach(([k, v]) => { if (!(k in lookup)) lookup[k] = v; });
         _gtfsRouteLookup = lookup;
+        _gtfsRouteLongLookup = longMap;
         // Store trip_id → internal route_id for route stop lookups
         _gtfsTripToRoute = (tripsData && typeof tripsData === 'object' && !Array.isArray(tripsData)) ? tripsData : {};
+        // Store trip_id → headsign for direction display
+        _gtfsTripHeadsign = (headsignData && typeof headsignData === 'object') ? headsignData : {};
         _gtfsRoutesLoading = null;
         return _gtfsRouteLookup;
       })
-      .catch(e => { console.warn('loadGtfsRoutes fejl:', e); _gtfsRouteLookup = {}; _gtfsTripToRoute = {}; _gtfsRoutesLoading = null; return _gtfsRouteLookup; });
+      .catch(e => { console.warn('loadGtfsRoutes fejl:', e); _gtfsRouteLookup = {}; _gtfsRouteLongLookup = {}; _gtfsTripToRoute = {}; _gtfsTripHeadsign = {}; _gtfsRoutesLoading = null; return _gtfsRouteLookup; });
     return _gtfsRoutesLoading;
   }
 
@@ -900,7 +911,8 @@ svg.map-icon {
       return entries.slice(0, 8).map(e => {
         const label = e.short_name || routeLookup[e.route_id] || e.route_id || '';
         const timeStr = (e.departure || e.arrival || '').substring(0, 5);
-        return { name: label, time: timeStr };
+        const dir = e.headsign || (_gtfsTripHeadsign && _gtfsTripHeadsign[e.route_id]) || '';
+        return { name: label, time: timeStr, dir };
       });
     }catch(e){ console.warn('fetchGtfsDepartures fejl:', e); return []; }
   }
@@ -1136,7 +1148,7 @@ svg.map-icon {
   // - Single leg if stop2 is on the same route as stop1 (direct route)
   // - Two legs if a transfer stop is found (route1 → transfer → route2 → stop2)
   // - Falls back to two independent legs if no connection is found
-  // Returns array of leg objects: { stop, routeShortName, tripId, internalRouteId, isTransfer? }
+  // Returns array of leg objects: { stop, routeShortName, routeLongName, routeHeadsign, tripId, internalRouteId, isTransfer? }
   async function findTransitLegs(stop1, stop2){
     if (!stop1) return [];
     try{
@@ -1148,6 +1160,13 @@ svg.map-icon {
 
       const slotKey = _getDepartureSlotKey();
       const depsWindow = await _loadDepartureWindow(slotKey);
+
+      // Helper: return a dep's headsign using inline field then trips_headsign lookup
+      const depHeadsign = (e) => e ? (e.headsign || (_gtfsTripHeadsign && _gtfsTripHeadsign[e.route_id]) || '') : '';
+
+      // Helper: return a dep's long name via the internal route_id → long_name lookup
+      const depLongName = (internalRouteId) =>
+        (internalRouteId && _gtfsRouteLongLookup && _gtfsRouteLongLookup[internalRouteId]) || '';
 
       // Helper: get first dep entry for a stop in the current (or next found) window
       const getFirstDep = async (stopId) => {
@@ -1169,18 +1188,53 @@ svg.map-icon {
         return null;
       };
 
-      const e1 = await getFirstDep(stop1.stop_id);
-      const tripId1 = e1 ? e1.route_id : null;
-      const shortName1 = e1 ? (e1.short_name || routeLookup[tripId1] || tripId1 || '') : '';
-      const internalRoute1 = tripId1 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId1]) || tripId1) : null;
-      const leg1 = { stop: stop1, routeShortName: shortName1, tripId: tripId1, internalRouteId: internalRoute1 };
+      // Build leg1 helper
+      const makeLeg1 = (e1) => {
+        const tripId1 = e1 ? e1.route_id : null;
+        const shortName1 = e1 ? (e1.short_name || routeLookup[tripId1] || tripId1 || '') : '';
+        const internalRoute1 = tripId1 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId1]) || tripId1) : null;
+        return {
+          stop: stop1,
+          routeShortName: shortName1,
+          routeLongName:  depLongName(internalRoute1),
+          routeHeadsign:  depHeadsign(e1),
+          tripId: tripId1,
+          internalRouteId: internalRoute1,
+          _e1: e1
+        };
+      };
 
-      if (!stop2) return [leg1];
+      if (!stop2){
+        const e1 = await getFirstDep(stop1.stop_id);
+        return [makeLeg1(e1)];
+      }
 
       const stop2Id = String(stop2.stop_id);
+
+      // ── Try ALL departures at stop1 in current window to find a direct route to stop2 ──
+      // This is key for long-distance routes: the first departure may be a local bus while
+      // a later departure in the same window goes directly to stop2.
+      const stop1Entries = depsWindow[String(stop1.stop_id)] || [];
+      let bestDirectEntry = null;
+      for (const e of stop1Entries){
+        const internalRoute = ((_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id);
+        const stopsOnRoute = routeStopsData[internalRoute] || [];
+        if (stopsOnRoute.some(s => String(s) === stop2Id)){
+          bestDirectEntry = e;
+          break;
+        }
+      }
+      if (bestDirectEntry){
+        return [makeLeg1(bestDirectEntry)];
+      }
+
+      // ── No direct route found in current window – fall back to first dep and do transfer search ──
+      const e1 = stop1Entries.length ? stop1Entries[0] : await getFirstDep(stop1.stop_id);
+      const leg1 = makeLeg1(e1);
+      const { internalRouteId: internalRoute1 } = leg1;
       const stopsOnRoute1 = internalRoute1 ? (routeStopsData[internalRoute1] || []) : [];
 
-      // Direct route: stop2 is already on route1
+      // Direct route check with the first dep (covers case where current window was empty)
       if (internalRoute1 && stopsOnRoute1.some(s => String(s) === stop2Id)){
         return [leg1];
       }
@@ -1248,7 +1302,16 @@ svg.map-icon {
             : (routeLookup[transferRouteId] || transferRouteId || '');
           const leg2DepTime = e2 ? (e2.departure || e2.arrival || '').substring(0, 5) : '';
 
-          const leg2 = { stop: transferStop, routeShortName: shortName2, tripId: tripId2, internalRouteId: transferRouteId, isTransfer: true, scheduledDepTime: leg2DepTime };
+          const leg2 = {
+            stop: transferStop,
+            routeShortName: shortName2,
+            routeLongName:  depLongName(transferRouteId),
+            routeHeadsign:  depHeadsign(e2),
+            tripId: tripId2,
+            internalRouteId: transferRouteId,
+            isTransfer: true,
+            scheduledDepTime: leg2DepTime
+          };
           return [leg1, leg2];
         }
       }
@@ -1258,7 +1321,14 @@ svg.map-icon {
       const tripId2 = e2 ? e2.route_id : null;
       const shortName2 = e2 ? (e2.short_name || routeLookup[tripId2] || tripId2 || '') : '';
       const internalRoute2 = tripId2 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId2]) || tripId2) : null;
-      return [leg1, { stop: stop2, routeShortName: shortName2, tripId: tripId2, internalRouteId: internalRoute2 }];
+      return [leg1, {
+        stop: stop2,
+        routeShortName: shortName2,
+        routeLongName:  depLongName(internalRoute2),
+        routeHeadsign:  depHeadsign(e2),
+        tripId: tripId2,
+        internalRouteId: internalRoute2
+      }];
 
     }catch(e){ console.warn('findTransitLegs fejl:', e); return [{ stop: stop1, routeShortName: null, tripId: null, internalRouteId: null }]; }
   }
@@ -1270,6 +1340,7 @@ svg.map-icon {
     filtered.slice(0, 5).forEach(d => {
       html += '<div class="oex-tp-dep">';
       if (d.name) html += '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>';
+      if (d.dir)  html += '<span class="oex-tp-dep-dir">→ '+escapeHtml(d.dir)+'</span>';
       html += '<span class="oex-tp-dep-time">'+escapeHtml(d.time)+'</span>';
       html += '</div>';
     });
@@ -1277,7 +1348,7 @@ svg.map-icon {
     return html;
   }
 
-  // legs: array of { stop, routeShortName, deps, nextDep, isTransfer? }
+  // legs: array of { stop, routeShortName, routeLongName?, routeHeadsign?, deps, nextDep, isTransfer? }
   // Each leg gets its own section with bus line badge, stop info, departures and a clickable "Næste afgang" row
   function showTransitPanel(legs, hasB){
     const existing = document.getElementById('oex-transit-panel');
@@ -1293,11 +1364,14 @@ svg.map-icon {
       const isFirst = i === 0;
       const isTransfer = !!leg.isTransfer;
       const lineBadge = leg.routeShortName ? '<span class="oex-tp-dep-line" style="font-size:15px;padding:2px 8px;">'+escapeHtml(leg.routeShortName)+'</span>' : '';
+      const dirText = (leg.routeHeadsign || leg.routeLongName)
+        ? ' <span class="oex-tp-dep-dir" style="font-size:12px;">→ '+escapeHtml(leg.routeHeadsign || leg.routeLongName)+'</span>'
+        : '';
       const stopLabel = isFirst ? 'Fra A' : (isTransfer ? 'Skift' : 'Til B');
       const distText = stop.dist ? ' <span style="color:#bbbbbb;font-size:11px;">('+stop.dist+' m til fods)</span>' : '';
 
       html += '<div class="oex-tp-leg" style="margin-top:'+(isFirst?'4':'10')+'px;padding-top:'+(isFirst?'0':'8')+'px;'+(isFirst?'':'border-top:1px solid #333;')+'">';
-      html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;">'+lineBadge+
+      html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px;">'+lineBadge+dirText+
         '<span style="font-size:12px;"><strong>'+stopLabel+':</strong> '+escapeHtml(stop.name)+distText+'</span></div>';
       html += _renderRouteList(leg.deps, leg.routeShortName);
 
