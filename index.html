@@ -151,6 +151,38 @@ svg.map-icon {
 #oex-transit-panel .oex-tp-dep-time { color:#ffffff; font-weight:700; white-space:nowrap; }
 #oex-transit-panel .oex-tp-dep-rt { color:#00e676; font-size:10px; margin-left:2px; }
 
+/* BUS STOP MARKER POPUP */
+.oex-busstop-popup {
+  position:absolute;
+  z-index:50;
+  background:#000000;
+  border:2px solid #00B0F8;
+  border-radius:8px;
+  padding:8px 12px;
+  color:#ffffff;
+  font-size:12px;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  white-space:nowrap;
+  box-shadow:0 4px 16px rgba(0,176,248,.35);
+  pointer-events:none;
+  transform:translate(-50%, calc(-100% - 14px));
+}
+.oex-busstop-popup .oex-bp-title { font-weight:700; color:#00B0F8; margin-bottom:5px; font-size:13px; }
+.oex-busstop-popup .oex-bp-dep { display:flex; align-items:center; gap:5px; margin:2px 0; }
+.oex-busstop-popup .oex-bp-line { background:#00B0F8; color:#000; border-radius:3px; padding:1px 5px; font-weight:700; min-width:28px; text-align:center; flex-shrink:0; }
+.oex-busstop-popup .oex-bp-time { color:#ffffff; font-weight:700; }
+.oex-busstop-popup .oex-bp-none { color:#bbbbbb; font-size:11px; }
+.oex-busstop-popup::after {
+  content:'';
+  position:absolute;
+  bottom:-9px;
+  left:50%;
+  transform:translateX(-50%);
+  border:5px solid transparent;
+  border-top-color:#00B0F8;
+  border-bottom:0;
+}
+
 </style>
 </head>
 <body>
@@ -245,6 +277,7 @@ svg.map-icon {
   let map, datasource, bubbleLayer, symbolLayer, routeSource, routeLayer, routeLabelMarker;
   let currentTravelMode = 'car';
   let busMarkers = [];
+  let _busStopPopup = null;
   const timers = {1:null, 2:null};
   const JYLLAND_BBOX = [8.0, 54.8, 10.95, 57.75];
   function zoomToJylland(duration=300){ try{ if(map) map.setCamera({ bounds: JYLLAND_BBOX, padding:60, duration }); }catch(e){} }
@@ -416,6 +449,9 @@ svg.map-icon {
         addr.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); triggerSearch(idx); } });
         document.addEventListener("click", (e) => { const sug = document.getElementById("sug"+idx); if (sug && !sug.contains(e.target) && e.target !== addr) { setTimeout(()=> sug.style.display = "none", 100); } });
       });
+
+      // Close bus stop popup when clicking outside a marker
+      document.addEventListener('click', () => { _closeBusStopPopup(); });
 
       [1,2].forEach(async (idx) => {
         let saved = null; try { saved = localStorage.getItem("oex_addr"+idx); } catch(e) {}
@@ -614,8 +650,77 @@ svg.map-icon {
   function clearBusDisplay(){
     busMarkers.forEach(m=>{ try{ map.markers.remove(m); }catch(_){} });
     busMarkers = [];
+    _closeBusStopPopup();
     const panel = document.getElementById('oex-transit-panel');
     if (panel) panel.remove();
+  }
+
+  function _closeBusStopPopup(){
+    if (_busStopPopup){ try{ _busStopPopup.remove(); }catch(_){} _busStopPopup = null; }
+  }
+
+  function _attachBusStopPopup(marker, stop, deps, nextDep){
+    // Build popup HTML content
+    function buildPopupHtml(){
+      let h = '<div class="oex-bp-title">🚌 '+escapeHtml(stop.name)+'</div>';
+      h += '<div style="color:#bbbbbb;font-size:11px;margin-bottom:5px;">'+stop.dist+' m til fods</div>';
+      if (deps && deps.length){
+        deps.slice(0, 6).forEach(d => {
+          h += '<div class="oex-bp-dep">';
+          if (d.name) h += '<span class="oex-bp-line">'+escapeHtml(d.name)+'</span>';
+          h += '<span class="oex-bp-time">'+escapeHtml(d.time)+'</span>';
+          h += '</div>';
+        });
+      } else if (nextDep){
+        h += '<div class="oex-bp-none">Ingen afgange nu</div>';
+        h += '<div class="oex-bp-dep"><span class="oex-bp-line">'+escapeHtml(nextDep.routeShortName||'?')+'</span><span class="oex-bp-time">'+escapeHtml(nextDep.nextTime)+'</span></div>';
+      } else {
+        h += '<div class="oex-bp-none">Ingen afgange fundet</div>';
+      }
+      return h;
+    }
+
+    function showPopup(e){
+      e.stopPropagation();
+      const mapWrap = document.querySelector('.map-wrap');
+      if (!mapWrap) return;
+      // Toggle: close if same popup already open for this marker
+      if (_busStopPopup && _busStopPopup._oexMarker === marker){
+        _closeBusStopPopup(); return;
+      }
+      _closeBusStopPopup();
+      const popup = document.createElement('div');
+      popup.className = 'oex-busstop-popup';
+      popup._oexMarker = marker;
+      popup.innerHTML = buildPopupHtml();
+      // Position popup over the marker element
+      const markerEl = marker.getElement ? marker.getElement() : null;
+      const wrapRect = mapWrap.getBoundingClientRect();
+      if (markerEl){
+        const mRect = markerEl.getBoundingClientRect();
+        popup.style.left = (mRect.left - wrapRect.left + mRect.width / 2) + 'px';
+        popup.style.top  = (mRect.top  - wrapRect.top) + 'px';
+      } else {
+        popup.style.left = '50%'; popup.style.top = '40%';
+      }
+      mapWrap.appendChild(popup);
+      _busStopPopup = popup;
+    }
+
+    // Attach click to the marker's DOM element once it's ready
+    function tryAttach(){
+      const el = marker.getElement ? marker.getElement() : null;
+      if (el){
+        if (!el._oexBusPopupAttached){
+          el._oexBusPopupAttached = true;
+          el.style.cursor = 'pointer';
+          el.addEventListener('click', showPopup);
+        }
+      }
+    }
+    // Azure Maps may not have rendered the element yet; try immediately and after a tick
+    tryAttach();
+    setTimeout(tryAttach, 200);
   }
 
   function _haversineDist(lat1, lng1, lat2, lng2){
@@ -873,16 +978,18 @@ svg.map-icon {
     if (stop1){
       const m = new atlas.HtmlMarker({
         position: [stop1.lon, stop1.lat],
-        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;">🚌 A</div>'
+        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 A</div>'
       });
       map.markers.add(m); busMarkers.push(m);
+      _attachBusStopPopup(m, stop1, deps1, nextDep1);
     }
     if (stop2){
       const m = new atlas.HtmlMarker({
         position: [stop2.lon, stop2.lat],
-        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;">🚌 B</div>'
+        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 B</div>'
       });
       map.markers.add(m); busMarkers.push(m);
+      _attachBusStopPopup(m, stop2, deps2, nextDep2);
     }
 
     if (hasA && hasB){
