@@ -528,7 +528,7 @@ svg.map-icon {
       map.events.add('rotateend', _oexSync);
 
       // Forudindlæs GTFS stop-data i baggrunden så det er klar ved brug
-      Promise.all([loadGtfsStops(), loadGtfsRoutes()]).catch(() => {});
+      Promise.all([loadGtfsStops(), loadGtfsRoutes(), loadGtfsRouteStops()]).catch(() => {});
     });
   }
 
@@ -745,7 +745,10 @@ svg.map-icon {
   let _gtfsStops = null;
   let _gtfsStopsLoading = null;
   let _gtfsRouteLookup = null;      // departure route_id → route_short_name (via trips_by_id + routes)
+  let _gtfsTripToRoute = null;      // departure route_id (trip_id) → internal route_id
   let _gtfsRoutesLoading = null;
+  let _gtfsRouteStops = null;       // internal route_id → [stop_ids]
+  let _gtfsRouteStopsLoading = null;
   let _depsCacheKey = null;         // currently cached departure slot key
   let _depsCacheData = null;        // currently cached departure file data
   let _gtfsStopMap = null;          // stop_id → stop object (built lazily)
@@ -787,11 +790,23 @@ svg.map-icon {
         // Also add direct entries from routeMap as fallback (only if not already mapped via trips_by_id)
         Object.entries(routeMap).forEach(([k, v]) => { if (!(k in lookup)) lookup[k] = v; });
         _gtfsRouteLookup = lookup;
+        // Store trip_id → internal route_id for route stop lookups
+        _gtfsTripToRoute = (tripsData && typeof tripsData === 'object' && !Array.isArray(tripsData)) ? tripsData : {};
         _gtfsRoutesLoading = null;
         return _gtfsRouteLookup;
       })
-      .catch(e => { console.warn('loadGtfsRoutes fejl:', e); _gtfsRouteLookup = {}; _gtfsRoutesLoading = null; return _gtfsRouteLookup; });
+      .catch(e => { console.warn('loadGtfsRoutes fejl:', e); _gtfsRouteLookup = {}; _gtfsTripToRoute = {}; _gtfsRoutesLoading = null; return _gtfsRouteLookup; });
     return _gtfsRoutesLoading;
+  }
+
+  async function loadGtfsRouteStops(){
+    if (_gtfsRouteStops) return _gtfsRouteStops;
+    if (_gtfsRouteStopsLoading) return _gtfsRouteStopsLoading;
+    _gtfsRouteStopsLoading = fetch('data/route_stops.json')
+      .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(data => { _gtfsRouteStops = (data && typeof data === 'object') ? data : {}; _gtfsRouteStopsLoading = null; return _gtfsRouteStops; })
+      .catch(e => { console.warn('loadGtfsRouteStops fejl:', e); _gtfsRouteStops = {}; _gtfsRouteStopsLoading = null; return _gtfsRouteStops; });
+    return _gtfsRouteStopsLoading;
   }
 
   function _getDepartureSlotKey(){
@@ -971,11 +986,14 @@ svg.map-icon {
   async function _findAndShowRouteStops(stop1){
     if (!stop1 || !stop1.stop_id) return;
     try{
-      const routeLookup = await loadGtfsRoutes();
+      const [routeLookup, routeStopsData] = await Promise.all([
+        loadGtfsRoutes(),
+        loadGtfsRouteStops()
+      ]);
       await loadGtfsStops();
       _ensureGtfsStopMap();
 
-      // Find the soonest departure at stop1 – start from current slot, then scan forward
+      // Find the soonest departure at stop1 to identify which route is next
       const currentKey = _getDepartureSlotKey();
       const allKeys = _getDaySlotKeys();
       const currentIdx = allKeys.indexOf(currentKey);
@@ -983,9 +1001,8 @@ svg.map-icon {
         ? [...allKeys.slice(currentIdx), ...allKeys.slice(0, currentIdx)]
         : allKeys;
 
-      let routeId = null;
+      let tripId = null;
       let routeShortName = '';
-      let activeWindow = null;
       const MAX_CHECKS = 60; // up to 60 × 5-min slots = 5 hours ahead
       let checked = 0;
       for (const key of ordered){
@@ -998,33 +1015,23 @@ svg.map-icon {
           const entries = data[stop1.stop_id];
           if (entries && entries.length){
             const e = entries[0];
-            routeId = e.route_id;
-            routeShortName = e.short_name || routeLookup[routeId] || routeId || '';
-            activeWindow = data;
+            tripId = e.route_id;
+            routeShortName = e.short_name || routeLookup[tripId] || tripId || '';
             break;
           }
         }catch(_){ continue; }
       }
-      if (!routeId || !activeWindow) return;
+      if (!tripId) return;
 
-      // Collect all stops in this window that share the same route_id
-      const routeStops = [];
-      for (const [stopId, entries] of Object.entries(activeWindow)){
-        if (!Array.isArray(entries)) continue;
-        for (const e of entries){
-          if (e.route_id === routeId){
-            routeStops.push({ stop_id: stopId, departure: (e.departure || e.arrival || '').substring(0, 5) });
-            break;
-          }
-        }
-      }
-      // Sort by departure time (proxy for stop sequence)
-      routeStops.sort((a, b) => a.departure.localeCompare(b.departure));
+      // Map trip_id → internal route_id, then look up all stops for that route
+      const internalRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[tripId]) || tripId;
+      const stopIds = routeStopsData[internalRouteId];
+      if (!stopIds || !stopIds.length) return;
 
-      // Place a small pin marker for each stop (skip the A stop itself)
-      for (const rs of routeStops){
-        if (rs.stop_id === String(stop1.stop_id)) continue;
-        const stopInfo = _gtfsStopMap.get(String(rs.stop_id));
+      // Place a small pin marker for each stop along the route (skip the A stop itself)
+      for (const stopId of stopIds){
+        if (String(stopId) === String(stop1.stop_id)) continue;
+        const stopInfo = _gtfsStopMap.get(String(stopId));
         if (!stopInfo) continue;
         const lat = stopInfo.lat;
         const lon = stopInfo.lon !== undefined ? stopInfo.lon : stopInfo.lng;
@@ -1036,7 +1043,7 @@ svg.map-icon {
         });
         map.markers.add(marker);
         busMarkers.push(marker);
-        _attachRouteStopPopup(marker, stopInfo.name || rs.stop_id, routeShortName, rs.departure);
+        _attachRouteStopPopup(marker, stopInfo.name || stopId, routeShortName, '');
       }
     }catch(e){ console.warn('_findAndShowRouteStops fejl:', e); }
   }

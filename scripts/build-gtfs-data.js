@@ -6,6 +6,7 @@
  *   data/stops.json            – alle busstop: [{id, name, lat, lng}, ...]
  *   data/stop_routes.json      – stop_id → ruter: {"851459100": [{"line":"1A","headsigns":["Vanløse"]}, ...], ...}
  *   data/routes.json           – route_id → short_name: {"102785-12345": "2A", ...}
+ *   data/route_stops.json      – route_id → stop-id-liste: {"102785-25895_4": ["stop1","stop2",...], ...}
  *   data/departures_5min/*.json – 5-min afgangsvinduer: {"stop_id": [{route_id, short_name, arrival, departure}, ...], ...}
  *
  * Brug:
@@ -163,6 +164,8 @@ async function main() {
   const stopRoutesMap = {};  // stop_id → Map<line, Set<headsign>>
   // Byg 5-min afgangsvinduer: slotKey ('HH_MM', f.eks. '08_05') → stop_id → [{route_id, short_name, arrival, departure}]
   const departureSlots = {};
+  // Byg route_id → Set<stop_id> til route_stops.json
+  const routeStopSet = {};  // route_id → Set<stop_id>
 
   const lines = stopTimesText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   const headers = parseCSVLine(lines[0]).map(h => h.trim().replace(/^\uFEFF/, ''));
@@ -198,6 +201,10 @@ async function main() {
       if (!stopRoutesMap[stopId][lineName]) stopRoutesMap[stopId][lineName] = new Set();
       if (trip.headsign) stopRoutesMap[stopId][lineName].add(trip.headsign);
     }
+
+    // ── route_stops.json: registrér alle stop per rute ──
+    if (!routeStopSet[trip.routeId]) routeStopSet[trip.routeId] = new Set();
+    routeStopSet[trip.routeId].add(stopId);
 
     // ── departures_5min/: registrér alle afgange med short_name ──
     const depTime = colDeparture >= 0 ? (vals[colDeparture] || '').trim() : '';
@@ -239,7 +246,16 @@ async function main() {
   fs.writeFileSync(stopRoutesFile, JSON.stringify(stopRoutesOut));
   console.log(`  → ${Object.keys(stopRoutesOut).length} stop-ruter skrevet til ${stopRoutesFile}`);
 
-  // ── 3. Skriv departures_5min/*.json ─────────────────────────────────────
+  // ── 3. Skriv route_stops.json ─────────────────────────────────────────────
+  const routeStopsOut = {};
+  for (const [routeId, stops] of Object.entries(routeStopSet)) {
+    routeStopsOut[routeId] = [...stops];
+  }
+  const routeStopsFile = path.join(outDir, 'route_stops.json');
+  fs.writeFileSync(routeStopsFile, JSON.stringify(routeStopsOut));
+  console.log(`  → ${Object.keys(routeStopsOut).length} ruter skrevet til ${routeStopsFile}`);
+
+  // ── 4. Skriv departures_5min/*.json ─────────────────────────────────────
   const depOutDir = path.join(outDir, 'departures_5min');
   fs.mkdirSync(depOutDir, { recursive: true });
   let slotCount = 0;
