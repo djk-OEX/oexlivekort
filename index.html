@@ -917,11 +917,13 @@ svg.map-icon {
     }catch(e){ console.warn('fetchGtfsDepartures fejl:', e); return []; }
   }
 
-  // Generates sorted GTFS slot keys covering one full service day (04:00–27:55),
+  // Generates sorted GTFS slot keys covering one full service day (04:00–35:55),
   // then wraps back to 04:00. Used to scan for the next available departure.
+  // Upper bound 35 covers GTFS extended times (28:xx–35:xx) used for overnight
+  // services that continue well past midnight on the same service day.
   function _getDaySlotKeys(){
     const keys = [];
-    for (let h = 4; h <= 27; h++){
+    for (let h = 4; h <= 35; h++){
       for (let m = 0; m < 60; m += 5){
         keys.push(String(h).padStart(2,'0') + '_' + String(m).padStart(2,'0'));
       }
