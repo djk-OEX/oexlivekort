@@ -2,7 +2,7 @@
 /**
  * build-gtfs-data.js
  * ------------------
- * Pre-processer GTFS-data for Danmark til kompakte JSON-filer:
+ * Pre-processor GTFS-data for Danmark til kompakte JSON-filer:
  *   data/stops.json            – alle busstop: [{id, name, lat, lng}, ...]
  *   data/stop_routes.json      – stop_id → ruter: {"851459100": [{"line":"1A","headsigns":["Vanløse"]}, ...], ...}
  *   data/routes.json           – ruter: [{route_id, route_short_name, route_long_name}, ...]
