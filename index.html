@@ -183,6 +183,15 @@ svg.map-icon {
   border-bottom:0;
 }
 
+.oex-routestop-pin {
+  width:12px; height:12px;
+  background:#000;
+  border:2px solid #00B0F8;
+  border-radius:50%;
+  cursor:pointer;
+  box-shadow:0 0 6px rgba(0,176,248,.6);
+}
+
 </style>
 </head>
 <body>
@@ -739,6 +748,7 @@ svg.map-icon {
   let _gtfsRoutesLoading = null;
   let _depsCacheKey = null;         // currently cached departure slot key
   let _depsCacheData = null;        // currently cached departure file data
+  let _gtfsStopMap = null;          // stop_id → stop object (built lazily)
 
   async function loadGtfsStops(){
     if (_gtfsStops) return _gtfsStops;
@@ -898,6 +908,139 @@ svg.map-icon {
     }catch(e){ console.warn('fetchNextGtfsDeparture fejl:', e); return null; }
   }
 
+  // Build a stop_id → stop object map from the already-loaded _gtfsStops array
+  function _ensureGtfsStopMap(){
+    if (_gtfsStopMap) return;
+    _gtfsStopMap = new Map();
+    if (_gtfsStops){
+      _gtfsStops.forEach(s => {
+        const id = String(s.stop_id !== undefined ? s.stop_id : (s.id || ''));
+        if (id) _gtfsStopMap.set(id, s);
+      });
+    }
+  }
+
+  // Attach a click popup to a route-stop marker showing stop name, route, and departure time
+  function _attachRouteStopPopup(marker, stopName, routeName, departureTime){
+    function buildHtml(){
+      let h = '<div class="oex-bp-title">🚏 '+escapeHtml(stopName)+'</div>';
+      h += '<div class="oex-bp-dep">';
+      if (routeName) h += '<span class="oex-bp-line">'+escapeHtml(routeName)+'</span>';
+      if (departureTime) h += '<span class="oex-bp-time">'+escapeHtml(departureTime)+'</span>';
+      h += '</div>';
+      return h;
+    }
+
+    function showPopup(e){
+      e.stopPropagation();
+      const mapWrap = document.querySelector('.map-wrap');
+      if (!mapWrap) return;
+      if (_busStopPopup && _busStopPopup._oexMarker === marker){ _closeBusStopPopup(); return; }
+      _closeBusStopPopup();
+      const popup = document.createElement('div');
+      popup.className = 'oex-busstop-popup';
+      popup._oexMarker = marker;
+      popup.innerHTML = buildHtml();
+      const markerEl = marker.getElement ? marker.getElement() : null;
+      const wrapRect = mapWrap.getBoundingClientRect();
+      if (markerEl){
+        const mRect = markerEl.getBoundingClientRect();
+        popup.style.left = (mRect.left - wrapRect.left + mRect.width / 2) + 'px';
+        popup.style.top  = (mRect.top  - wrapRect.top) + 'px';
+      } else {
+        popup.style.left = '50%'; popup.style.top = '40%';
+      }
+      mapWrap.appendChild(popup);
+      _busStopPopup = popup;
+    }
+
+    function tryAttach(){
+      const el = marker.getElement ? marker.getElement() : null;
+      if (el && !el._oexRsPopupAttached){
+        el._oexRsPopupAttached = true;
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', showPopup);
+      }
+    }
+    tryAttach();
+    setTimeout(tryAttach, 200);
+  }
+
+  // Find all stops sharing the next-departure route_id for the given stop,
+  // then place small clickable pin markers on the map for each stop along the route.
+  async function _findAndShowRouteStops(stop1){
+    if (!stop1 || !stop1.stop_id) return;
+    try{
+      const routeLookup = await loadGtfsRoutes();
+      await loadGtfsStops();
+      _ensureGtfsStopMap();
+
+      // Find the soonest departure at stop1 – start from current slot, then scan forward
+      const currentKey = _getDepartureSlotKey();
+      const allKeys = _getDaySlotKeys();
+      const currentIdx = allKeys.indexOf(currentKey);
+      const ordered = currentIdx >= 0
+        ? [...allKeys.slice(currentIdx), ...allKeys.slice(0, currentIdx)]
+        : allKeys;
+
+      let routeId = null;
+      let routeShortName = '';
+      let activeWindow = null;
+      const MAX_CHECKS = 60; // up to 60 × 5-min slots = 5 hours ahead
+      let checked = 0;
+      for (const key of ordered){
+        if (checked >= MAX_CHECKS) break;
+        checked++;
+        try{
+          const r = await fetch('data/departures_5min/' + key + '.json');
+          if (!r.ok) continue;
+          const data = await r.json();
+          const entries = data[stop1.stop_id];
+          if (entries && entries.length){
+            const e = entries[0];
+            routeId = e.route_id;
+            routeShortName = e.short_name || routeLookup[routeId] || routeId || '';
+            activeWindow = data;
+            break;
+          }
+        }catch(_){ continue; }
+      }
+      if (!routeId || !activeWindow) return;
+
+      // Collect all stops in this window that share the same route_id
+      const routeStops = [];
+      for (const [stopId, entries] of Object.entries(activeWindow)){
+        if (!Array.isArray(entries)) continue;
+        for (const e of entries){
+          if (e.route_id === routeId){
+            routeStops.push({ stop_id: stopId, departure: (e.departure || e.arrival || '').substring(0, 5) });
+            break;
+          }
+        }
+      }
+      // Sort by departure time (proxy for stop sequence)
+      routeStops.sort((a, b) => a.departure.localeCompare(b.departure));
+
+      // Place a small pin marker for each stop (skip the A stop itself)
+      for (const rs of routeStops){
+        if (rs.stop_id === String(stop1.stop_id)) continue;
+        const stopInfo = _gtfsStopMap.get(String(rs.stop_id));
+        if (!stopInfo) continue;
+        const lat = stopInfo.lat;
+        const lon = stopInfo.lon !== undefined ? stopInfo.lon : stopInfo.lng;
+        if (!isValidLatLon(lat, lon)) continue;
+
+        const marker = new atlas.HtmlMarker({
+          position: [lon, lat],
+          htmlContent: '<div class="oex-routestop-pin"></div>'
+        });
+        map.markers.add(marker);
+        busMarkers.push(marker);
+        _attachRouteStopPopup(marker, stopInfo.name || rs.stop_id, routeShortName, rs.departure);
+      }
+    }catch(e){ console.warn('_findAndShowRouteStops fejl:', e); }
+  }
+
   function _renderRouteList(deps){
     if (!deps || !deps.length) return '<div class="oex-tp-deps"><div class="oex-tp-dep" style="color:#bbbbbb;font-size:12px;">Ingen afgange i dette tidsvindue</div></div>';
     let html = '<div class="oex-tp-deps">';
@@ -1026,6 +1169,8 @@ svg.map-icon {
     }
 
     showTransitPanel(stop1, stop2, hasB, lat1, lng1, lat2, lng2, deps1, deps2, nextDep1, nextDep2);
+    // Show route stops on map for the nearest stop at A (fire-and-forget)
+    if (stop1) _findAndShowRouteStops(stop1).catch(() => {});
   }
 
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; clearBusDisplay(); updateMapFromForm(false); }
