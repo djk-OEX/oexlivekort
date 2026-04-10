@@ -1218,12 +1218,14 @@ svg.map-icon {
           const allSlotKeys = _getDaySlotKeys();
           let slotStart = 0;
           if (leg1HHMM.length >= 5) {
-            const kk = leg1HHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(leg1HHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
-            const ki = allSlotKeys.indexOf(kk);
+            // Convert HH:MM to the nearest 5-min slot key (HH_MM)
+            const slotKey2 = leg1HHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(leg1HHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
+            const ki = allSlotKeys.indexOf(slotKey2);
             if (ki >= 0) slotStart = ki;
           }
           const orderedSlots = [...allSlotKeys.slice(slotStart), ...allSlotKeys.slice(0, slotStart)];
           let e2 = null;
+          // Search up to 96 slots = 8 hours of 5-min windows
           for (let ki2 = 0; ki2 < Math.min(96, orderedSlots.length) && !e2; ki2++) {
             try {
               const r2 = await fetch('data/departures_5min/' + orderedSlots[ki2] + '.json');
@@ -1232,11 +1234,11 @@ svg.map-icon {
               const ents2 = dat2[String(sid)];
               if (ents2 && ents2.length) {
                 for (const ent2 of ents2) {
-                  const ent2Int = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
-                  if (ent2Int === transferRouteId) { e2 = ent2; break; }
+                  const resolvedRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
+                  if (resolvedRouteId === transferRouteId) { e2 = ent2; break; }
                 }
               }
-            } catch(_r2) {}
+            } catch(_r2) { /* network/parse error – try next slot */ }
           }
           // Use the real trip_id from the departure entry so both shortName lookup
           // and _findAndShowRouteStops (route dots) resolve correctly via _gtfsTripToRoute.
