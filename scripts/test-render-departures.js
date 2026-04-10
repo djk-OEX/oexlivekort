@@ -38,7 +38,7 @@ function _renderRouteList(deps) {
  */
 function buildDepartures(entries, routeLookup) {
   return entries.slice(0, 8).map(e => {
-    const label = e.short_name || routeLookup[e.route_id] || '';
+    const label = e.short_name || routeLookup[e.route_id] || e.route_id || '';
     const timeStr = (e.departure || e.arrival || '').substring(0, 5);
     return { name: label, time: timeStr };
   });
@@ -121,18 +121,18 @@ function buildTransitPanelHtml(stop1, stop2, hasB, deps1, deps2, nextDep1, nextD
   console.log('✅ Test 3 bestået: short_name fra routeLookup vises korrekt');
 })();
 
-// ── Test 4: Afgange uden short_name og uden routeLookup → vis kun tid ─────────
-(function testTimeOnly() {
+// ── Test 4: Afgange uden short_name og uden routeLookup → vis route_id som label ─
+(function testRouteIdFallback() {
   const entries = [
     { route_id: '102785-555', departure: '10:30:00', arrival: '10:29:00' },
   ];
   const deps = buildDepartures(entries, {});
-  console.assert(deps[0].name === '', `FEJL: Forventet tomt navn, fik "${deps[0].name}"`);
+  console.assert(deps[0].name === '102785-555', `FEJL: Forventet route_id "102785-555" som fallback, fik "${deps[0].name}"`);
   const html = _renderRouteList(deps);
-  console.assert(html.includes('10:30'), `FEJL: HTML mangler tid "10:30"`);
-  console.assert(!html.includes(' · '), 'FEJL: Uventet separator " · " ved manglende navn');
+  console.assert(html.includes('102785-555 · 10:30'), `FEJL: HTML mangler "102785-555 · 10:30": ${html}`);
+  console.assert(html.includes(' · '), 'FEJL: Separator " · " mangler ved route_id fallback');
   console.assert(!html.includes('Ingen afgange'), 'FEJL: Uventet ingen-afgange besked');
-  console.log('✅ Test 4 bestået: kun tid vises når short_name mangler');
+  console.log('✅ Test 4 bestået: route_id vises som fallback label når short_name mangler');
 })();
 
 // ── Test 5: HTML-escape af særlige tegn ───────────────────────────────────────
@@ -205,6 +205,24 @@ function buildTransitPanelHtml(stop1, stop2, hasB, deps1, deps2, nextDep1, nextD
   console.assert(!html.includes('oex-tp-routename'), 'FEJL: Uventet route short name ved null nextDep');
   console.assert(!html.includes('Næste afgang'), 'FEJL: Uventet Næste afgang ved null nextDep');
   console.log('✅ Test 10 bestået: ingen nextDep → kun ingen-afgange besked');
+})();
+
+// ── Test 11: route_id fallback via routeLookup (nye routes.json format) ────────
+(function testRouteIdFallbackViaLookup() {
+  // Simulates new routes.json format: route_id → short_name
+  const routeLookup = { '102785-159570930': '6A' };
+  const entries = [
+    { route_id: '102785-159570930', departure: '12:00:00', arrival: '11:59:00' },
+    // route_id not in lookup → should fallback to route_id itself
+    { route_id: '102785-999999999', departure: '12:05:00', arrival: '12:04:00' },
+  ];
+  const deps = buildDepartures(entries, routeLookup);
+  console.assert(deps[0].name === '6A', `FEJL: Forventet "6A" fra lookup, fik "${deps[0].name}"`);
+  console.assert(deps[1].name === '102785-999999999', `FEJL: Forventet route_id som fallback, fik "${deps[1].name}"`);
+  const html = _renderRouteList(deps);
+  console.assert(html.includes('6A · 12:00'), `FEJL: HTML mangler "6A · 12:00": ${html}`);
+  console.assert(html.includes('102785-999999999 · 12:05'), `FEJL: HTML mangler route_id fallback: ${html}`);
+  console.log('✅ Test 11 bestået: lookup virker + route_id vises som fallback ved manglende lookup');
 })();
 
 console.log('\nAlle tests bestået ✅');

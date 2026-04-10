@@ -628,7 +628,7 @@ svg.map-icon {
   // ── GTFS local stop lookup ──────────────────────────────────────────────────
   let _gtfsStops = null;
   let _gtfsStopsLoading = null;
-  let _gtfsRouteLookup = null;      // route_id → short_name
+  let _gtfsRouteLookup = null;      // departure route_id → route_short_name (via trips_by_id + routes)
   let _gtfsRoutesLoading = null;
   let _depsCacheKey = null;         // currently cached departure slot key
   let _depsCacheData = null;        // currently cached departure file data
@@ -646,18 +646,29 @@ svg.map-icon {
   async function loadGtfsRoutes(){
     if (_gtfsRouteLookup) return _gtfsRouteLookup;
     if (_gtfsRoutesLoading) return _gtfsRoutesLoading;
-    _gtfsRoutesLoading = fetch('data/routes.json')
-      .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-      .then(data => {
-        const lookup = {};
-        if (Array.isArray(data)){
-          // Array schema: [{route_id, short_name, ...}]
-          data.forEach(r => { if (r.route_id && r.short_name) lookup[r.route_id] = r.short_name; });
-        } else if (data && typeof data === 'object'){
-          // Object schema: {route_id: short_name} (string values) produced by build-gtfs-data.js
-          // Fallback for old format: {short_name: {agencyId, ...}} (object values) – use key as short_name
-          Object.entries(data).forEach(([k, v]) => { lookup[k] = typeof v === 'string' ? v : k; });
+    _gtfsRoutesLoading = Promise.all([
+      fetch('data/routes.json').then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }),
+      fetch('data/trips_by_id.json').then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }).catch(() => ({}))
+    ])
+      .then(([routesData, tripsData]) => {
+        // Build internal route_id → short_name from routes.json
+        const routeMap = {};
+        if (Array.isArray(routesData)){
+          // Array schema: [{route_id, route_short_name, route_long_name}]
+          routesData.forEach(r => { if (r.route_id && r.route_short_name) routeMap[r.route_id] = r.route_short_name; });
+        } else if (routesData && typeof routesData === 'object'){
+          Object.entries(routesData).forEach(([k, v]) => { routeMap[k] = typeof v === 'string' ? v : k; });
         }
+        // Build departure route_id → short_name using trips_by_id as bridge
+        const lookup = {};
+        if (tripsData && typeof tripsData === 'object' && !Array.isArray(tripsData)){
+          Object.entries(tripsData).forEach(([depRouteId, internalRouteId]) => {
+            const shortName = routeMap[internalRouteId];
+            if (shortName) lookup[depRouteId] = shortName;
+          });
+        }
+        // Also add direct entries from routeMap as fallback (only if not already mapped via trips_by_id)
+        Object.entries(routeMap).forEach(([k, v]) => { if (!(k in lookup)) lookup[k] = v; });
         _gtfsRouteLookup = lookup;
         _gtfsRoutesLoading = null;
         return _gtfsRouteLookup;
@@ -727,7 +738,7 @@ svg.map-icon {
       const entries = depsWindow[stopId];
       if (!entries || !entries.length) return [];
       return entries.slice(0, 8).map(e => {
-        const label = e.short_name || routeLookup[e.route_id] || '';
+        const label = e.short_name || routeLookup[e.route_id] || e.route_id || '';
         const timeStr = (e.departure || e.arrival || '').substring(0, 5);
         return { name: label, time: timeStr };
       });
@@ -770,7 +781,7 @@ svg.map-icon {
           const entries = data[stopId];
           if (entries && entries.length){
             const e = entries[0];
-            const shortName = e.short_name || routeLookup[e.route_id] || '';
+            const shortName = e.short_name || routeLookup[e.route_id] || e.route_id || '';
             const timeStr = (e.departure || e.arrival || '').substring(0, 8);
             return { routeShortName: shortName, nextTime: timeStr };
           }
