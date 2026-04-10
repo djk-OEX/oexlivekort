@@ -17,7 +17,8 @@
 .oex-btn, button, .actions button, svg.map-icon,
 label,
 input[type='text'], input[type='number'],
-input::placeholder {
+input::placeholder,
+#oex-transit-panel {
   forced-color-adjust: none !important;
 }
 label { color:#FFFFFF !important; }
@@ -80,6 +81,7 @@ input[type='text'], input[type='number'] { border-color:#363636 !important; }
       .oex-chip .dot{ background:#363636 !important; }
       .oex-chip-on{ border-color:#00B0F8 !important; }
       .oex-chip-on .dot{ background:#00B0F8 !important; }
+      #oex-transit-panel{ border-color:#00B0F8 !important; background:#000000 !important; color:#ffffff !important; }
     }
   
 /* OEX MAP ICON FINAL 24PX */
@@ -101,8 +103,8 @@ svg.map-icon {
 #oex-transit-panel {
   position:absolute;
   bottom:18px;
-  left:50%;
-  transform:translateX(-50%);
+  left:18px;
+  transform:none;
   z-index:30;
   background:#000000;
   border:2px solid #00B0F8;
