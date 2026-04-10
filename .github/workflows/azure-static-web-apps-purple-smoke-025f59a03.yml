@@ -20,6 +20,12 @@ jobs:
           submodules: true
           lfs: false
 
+      - name: Compress departure data
+        run: |
+          for f in data/departures_5min/*.json; do
+            gzip -9 -c "$f" > "${f}.gz" && rm "$f"
+          done
+
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1

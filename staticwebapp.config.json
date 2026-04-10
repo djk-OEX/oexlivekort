@@ -1,6 +1,13 @@
 {
   "routes": [
     {
+      "route": "/data/departures_5min/*.json.gz",
+      "headers": {
+        "Content-Encoding": "gzip",
+        "Content-Type": "application/json; charset=utf-8"
+      }
+    },
+    {
       "route": "/login",
       "redirect": "/.auth/login/aad",
       "statusCode": 302
