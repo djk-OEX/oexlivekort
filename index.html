@@ -1212,18 +1212,13 @@ svg.map-icon {
             dist: 0
           };
 
-          // Get the trip_id for the leg-2 bus at the transfer stop
-          const e2 = await getFirstDep(sid);
-          // Prefer a departure on transferRouteId
-          const entries2win = depsWindow[sid] || [];
-          const matchEntry = entries2win.find(e => {
-            const ir = (_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id;
-            return ir === transferRouteId;
-          });
-          const leg2Entry = matchEntry || e2;
-          const tripId2 = leg2Entry ? leg2Entry.route_id : null;
-          const ir2 = tripId2 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId2]) || tripId2) : transferRouteId;
-          const shortName2 = leg2Entry ? (leg2Entry.short_name || routeLookup[tripId2] || tripId2 || '') : (routeLookup[transferRouteId] || transferRouteId || '');
+          // Use transferRouteId directly for leg2 – it is the internal route id we already identified,
+          // so derive shortName and route-stop-dots from it rather than from whatever departure
+          // happens to be first at the transfer stop (which could belong to a different route).
+          const ir2 = transferRouteId;
+          const shortName2 = routeLookup[transferRouteId] || transferRouteId || '';
+          // tripId2 is the internal route id so _findAndShowRouteStops resolves the correct stop list
+          const tripId2 = transferRouteId;
 
           const leg2 = { stop: transferStop, routeShortName: shortName2, tripId: tripId2, internalRouteId: ir2, isTransfer: true };
           return [leg1, leg2];
