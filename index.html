@@ -1279,16 +1279,49 @@ svg.map-icon {
             dist: 0
           };
 
-          // Find an actual trip departure for the transfer route at the transfer stop,
-          // starting from leg1's departure time so leg2 departs after leg1 arrives.
+          // Find when leg1's trip arrives at the transfer stop, then compute slotStart for leg2.
+          // We scan departure files for the transfer stop looking for the same trip_id as e1,
+          // which gives us the actual arrival time of leg1 at the shift point.
+          const leg1TripId = e1 ? e1.route_id : null;
           const leg1HHMM = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
           const allSlotKeys = _getDaySlotKeys();
+          let arrivalAtTransferHHMM = '';
+          if (leg1TripId && leg1HHMM.length >= 5) {
+            const leg1SlotKey = leg1HHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(leg1HHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
+            const leg1SlotIdx = allSlotKeys.indexOf(leg1SlotKey);
+            const scanFrom = leg1SlotIdx >= 0 ? leg1SlotIdx : 0;
+            const scanOrdered = [...allSlotKeys.slice(scanFrom), ...allSlotKeys.slice(0, scanFrom)];
+            for (let si = 0; si < Math.min(24, scanOrdered.length) && !arrivalAtTransferHHMM; si++) {
+              try {
+                const ra = await fetch('data/departures_5min/' + scanOrdered[si] + '.json.gz');
+                if (!ra.ok) continue;
+                const da = await ra.json();
+                const ents = da[String(sid)];
+                if (ents && ents.length) {
+                  for (const ent of ents) {
+                    if (ent.route_id === leg1TripId) {
+                      arrivalAtTransferHHMM = (ent.departure || ent.arrival || '').substring(0, 5);
+                      break;
+                    }
+                  }
+                }
+              } catch(_ra) {}
+            }
+          }
+          // slotStart = round UP arrival time to next 5-min slot + skipSlots buffer.
+          // e.g. arrival 21:27 → ceil to 21:30 → slot 21_30 → +1 skipSlot → 21_35.
+          // Falls back to leg1's departure slot if arrival at transfer was not found.
+          const timeForLeg2 = arrivalAtTransferHHMM || leg1HHMM;
           let slotStart = 0;
-          if (leg1HHMM.length >= 5) {
-            // Convert HH:MM to the nearest 5-min slot key (HH_MM)
-            const slotKey2 = leg1HHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(leg1HHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
-            const ki = allSlotKeys.indexOf(slotKey2);
-            if (ki >= 0) slotStart = ki;
+          if (timeForLeg2.length >= 5) {
+            const tH = parseInt(timeForLeg2.substring(0, 2));
+            const tM = parseInt(timeForLeg2.substring(3, 5));
+            const nextSlotMins = Math.ceil((tH * 60 + tM) / 5) * 5;
+            const nextH = Math.floor(nextSlotMins / 60);
+            const nextM = nextSlotMins % 60;
+            const nextSlotKey = String(nextH).padStart(2, '0') + '_' + String(nextM).padStart(2, '0');
+            const ki = allSlotKeys.indexOf(nextSlotKey);
+            if (ki >= 0) slotStart = Math.min(ki + skipSlots, allSlotKeys.length - 1);
           }
           const orderedSlots = [...allSlotKeys.slice(slotStart), ...allSlotKeys.slice(0, slotStart)];
           let e2 = null;
