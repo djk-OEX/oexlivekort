@@ -1174,10 +1174,13 @@ svg.map-icon {
       const depLongName = (internalRouteId) =>
         (internalRouteId && _gtfsRouteLongLookup && _gtfsRouteLongLookup[internalRouteId]) || '';
 
-      // Helper: get first dep entry for a stop starting from startIdx (skip-adjusted)
-      const getFirstDep = async (stopId) => {
+      // Helper: get first dep entry for a stop.
+      // fromIdx defaults to startIdx (current time + skipSlots).
+      // Pass an explicit fromIdx to start searching from a specific slot (e.g. leg1 departure time).
+      const getFirstDep = async (stopId, fromIdx) => {
         const sid = String(stopId);
-        const ordered = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
+        const fi = (fromIdx !== undefined && fromIdx >= 0) ? fromIdx : startIdx;
+        const ordered = [...allKeys.slice(fi), ...allKeys.slice(0, fi)];
         for (let i = 0; i < Math.min(60, ordered.length); i++){
           try{
             const r = await fetch('data/departures_5min/'+ordered[i]+'.json.gz');
@@ -1335,7 +1338,12 @@ svg.map-icon {
               if (ents2 && ents2.length) {
                 for (const ent2 of ents2) {
                   const resolvedRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
-                  if (resolvedRouteId === transferRouteId) { e2 = ent2; break; }
+                  if (resolvedRouteId === transferRouteId) {
+                    // Only accept if departure is at or after leg1's expected arrival at transfer
+                    const dep2HHMM = (ent2.departure || ent2.arrival || '').substring(0, 5);
+                    if (timeForLeg2.length >= 5 && dep2HHMM.length >= 5 && dep2HHMM < timeForLeg2) continue;
+                    e2 = ent2; break;
+                  }
                 }
               }
             } catch(_r2) { /* network/parse error – try next slot */ }
@@ -1356,24 +1364,39 @@ svg.map-icon {
             tripId: tripId2,
             internalRouteId: transferRouteId,
             isTransfer: true,
-            scheduledDepTime: leg2DepTime
+            scheduledDepTime: leg2DepTime,
+            minDepartureTime: timeForLeg2,
+            fromStop: transferStop.name
           };
           return [leg1, leg2];
         }
       }
 
-      // No transfer found – show stop1 and stop2 as independent legs
-      const e2 = await getFirstDep(stop2.stop_id);
+      // No transfer found – show stop1 and stop2 as independent legs.
+      // Search stop2 from leg1's departure time so leg2 is always after leg1.
+      const leg1HHMM0 = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
+      let leg2StartIdx = startIdx;
+      if (leg1HHMM0.length >= 5) {
+        const l1H = parseInt(leg1HHMM0.substring(0, 2));
+        const l1M = parseInt(leg1HHMM0.substring(3, 5));
+        const l1SlotKey = String(l1H).padStart(2, '0') + '_' + String(Math.floor(l1M / 5) * 5).padStart(2, '0');
+        const l1Ki = allKeys.indexOf(l1SlotKey);
+        if (l1Ki >= 0) leg2StartIdx = l1Ki;
+      }
+      const e2 = await getFirstDep(stop2.stop_id, leg2StartIdx);
       const tripId2 = e2 ? e2.route_id : null;
       const shortName2 = e2 ? (e2.short_name || routeLookup[tripId2] || tripId2 || '') : '';
       const internalRoute2 = tripId2 ? ((_gtfsTripToRoute && _gtfsTripToRoute[tripId2]) || tripId2) : null;
+      const leg2DepTime0 = e2 ? (e2.departure || e2.arrival || '').substring(0, 5) : '';
       return [leg1, {
         stop: stop2,
         routeShortName: shortName2,
         routeLongName:  depLongName(internalRoute2),
         routeHeadsign:  depHeadsign(e2),
         tripId: tripId2,
-        internalRouteId: internalRoute2
+        internalRouteId: internalRoute2,
+        scheduledDepTime: leg2DepTime0,
+        minDepartureTime: leg1HHMM0
       }];
 
     }catch(e){ console.warn('findTransitLegs fejl:', e); return [{ stop: stop1, routeShortName: null, tripId: null, internalRouteId: null }]; }
@@ -1410,8 +1433,13 @@ svg.map-icon {
       const isFirst = i === 0;
       const isTransfer = !!leg.isTransfer;
       const lineBadge = leg.routeShortName ? '<span class="oex-tp-dep-line" style="font-size:15px;padding:2px 8px;">'+escapeHtml(leg.routeShortName)+'</span>' : '';
-      const dirText = (leg.routeHeadsign || leg.routeLongName)
-        ? ' <span class="oex-tp-dep-dir" style="font-size:12px;">→ '+escapeHtml(leg.routeHeadsign || leg.routeLongName)+'</span>'
+      // For transfer/connecting legs show "Origin → Headsign" when the departure stop (fromStop) is known.
+      // For other legs show only "→ Headsign".
+      const headsignText = leg.routeHeadsign || leg.routeLongName;
+      const dirText = headsignText
+        ? ' <span class="oex-tp-dep-dir" style="font-size:12px;">' +
+          (leg.fromStop ? escapeHtml(leg.fromStop) + ' → ' : '→ ') +
+          escapeHtml(headsignText) + '</span>'
         : '';
       const stopLabel = isFirst ? 'Fra A' : (isTransfer ? 'Skift' : 'Til B');
       const distText = stop.dist ? ' <span style="color:#bbbbbb;font-size:11px;">('+stop.dist+' m til fods)</span>' : '';
@@ -1469,9 +1497,17 @@ svg.map-icon {
         } else {
           leg.deps = allDeps;
         }
-        // For transfer legs: use the pre-calculated departure for the connecting route
-        // so the panel always shows the correct route/time and the "Næste afgang" button appears.
-        if (leg.isTransfer && leg.scheduledDepTime) {
+        // For leg2: suppress any current-window entries that predate leg1 departure.
+        // minDepartureTime is set on leg2 objects (both transfer and fallback) to ensure
+        // the departure list never shows times before the user could realistically board.
+        if (leg.minDepartureTime) {
+          const minT = leg.minDepartureTime;
+          leg.deps = leg.deps ? leg.deps.filter(d => !d.time || d.time >= minT) : leg.deps;
+        }
+        // Use the pre-calculated departure time (scheduledDepTime) for the connecting route
+        // whenever it is available (transfer legs and fallback leg2), so the panel always
+        // shows the correct route/time and the "Næste afgang" button appears.
+        if (leg.scheduledDepTime) {
           const schedEntry = { name: leg.routeShortName, time: leg.scheduledDepTime };
           const hasRouteInDeps = leg.deps && leg.deps.some(d => d.name === leg.routeShortName);
           if (!hasRouteInDeps) {
