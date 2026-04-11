@@ -1839,11 +1839,13 @@ svg.map-icon {
 
     // Draw route line using GTFS shapes for exact geometry (forward direction only).
     // For each leg, look up the trip's shape, find nearest shape points to boarding
-    // and alighting stops, then slice forward (ascending sequence). Falls back to a
-    // straight line between key stops if shapes data is unavailable.
+    // and alighting stops, then slice forward (ascending sequence). Falls back to
+    // a polyline through the ordered bus stops from route_stops.json, or a straight
+    // line between key stops as a last resort if no stop sequence is available.
     await loadGtfsStops();
     _ensureGtfsStopMap();
     await loadGtfsShapes();
+    const routeStopsData = await loadGtfsRouteStops();
     const stopCoordFn = (sid) => {
       const s = _gtfsStopMap.get(String(sid));
       if (!s) return null;
@@ -1897,11 +1899,36 @@ svg.map-icon {
         }
       }
       if (!segAdded) {
-        // Fallback: add just this stop's coordinate (straight line to next will be implicit)
-        const c = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
-        if (c) {
-          const last = stopLineCoords[stopLineCoords.length - 1];
-          if (!last || last[0] !== c[0] || last[1] !== c[1]) stopLineCoords.push(c);
+        // Fallback: draw through the ordered stop sequence from route_stops.json so
+        // the dashed line follows the actual bus route instead of a straight line.
+        const routeId = leg.internalRouteId || leg.tripId;
+        const stopsOnRoute = routeId ? (routeStopsData[routeId] || []) : [];
+        if (stopsOnRoute.length >= 2 && nextStop) {
+          const boardId  = String(leg.stop.stop_id);
+          const alightId = String(nextStop.stop_id);
+          const boardIdx  = stopsOnRoute.indexOf(boardId);
+          const alightIdx = stopsOnRoute.indexOf(alightId);
+          if (boardIdx >= 0 && alightIdx >= 0 && boardIdx !== alightIdx) {
+            const raw = boardIdx < alightIdx
+              ? stopsOnRoute.slice(boardIdx, alightIdx + 1)
+              : stopsOnRoute.slice(alightIdx, boardIdx + 1).reverse();
+            for (const sid of raw) {
+              const c = stopCoordFn(sid);
+              if (c) {
+                const last = stopLineCoords[stopLineCoords.length - 1];
+                if (!last || last[0] !== c[0] || last[1] !== c[1]) stopLineCoords.push(c);
+              }
+            }
+            segAdded = true;
+          }
+        }
+        if (!segAdded) {
+          // Last resort: add just this stop's coordinate (straight line to next will be implicit)
+          const c = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
+          if (c) {
+            const last = stopLineCoords[stopLineCoords.length - 1];
+            if (!last || last[0] !== c[0] || last[1] !== c[1]) stopLineCoords.push(c);
+          }
         }
       }
     }
