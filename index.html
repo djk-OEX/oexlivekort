@@ -459,7 +459,7 @@ svg.map-icon {
       map.layers.add([bubbleLayer, symbolLayer], "labels");
 
       routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
-      routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [6,4] });
+      routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85 });
       map.layers.add(routeLayer, "labels");
 
 
@@ -927,22 +927,28 @@ svg.map-icon {
 
   async function fetchGtfsDepartures(stopId){
     try{
-      const slotKey = _getDepartureSlotKey();
+      // +5min rule: always skip current slot AND the next slot (minimum 10 min ahead).
+      // e.g. at 21:02 skip 21_00.json and 21_05.json → start from 21_10.json.
+      const allKeys = _getDaySlotKeys();
+      const currentIdx = allKeys.indexOf(_getDepartureSlotKey());
+      const startIdx = currentIdx >= 0 ? Math.min(currentIdx + 2, allKeys.length - 1) : 0;
+      const slotKey = allKeys[startIdx];
       const [depsWindow, routeLookup] = await Promise.all([
         _loadDepartureWindow(slotKey),
         loadGtfsRoutes()
       ]);
       const entries = depsWindow[stopId];
       if (!entries || !entries.length) return [];
-      // Filter out departures that have already passed within the current 5-min window
+      // Compute the earliest acceptable departure time: now + 10 min
       const currentDate = new Date();
       let nowH = currentDate.getHours();
       if (nowH < 4) nowH += 24;
-      const nowHHMM = String(nowH).padStart(2,'0') + ':' + String(currentDate.getMinutes()).padStart(2,'0');
+      const minMins = nowH * 60 + currentDate.getMinutes() + 10;
+      const minHHMM = String(Math.floor(minMins / 60)).padStart(2,'0') + ':' + String(minMins % 60).padStart(2,'0');
       return entries
         .filter(e => {
           const t = (e.departure || e.arrival || '').substring(0, 5);
-          return !t || t >= nowHHMM;
+          return !t || t >= minHHMM;
         })
         .slice(0, 8).map(e => {
           const label = e.short_name || routeLookup[e.route_id] || e.route_id || '';
@@ -1116,13 +1122,12 @@ svg.map-icon {
       let routeShortName = '';
 
       if (!tripId){
-      // Find the soonest departure at stop1 to identify which route is next
-      const currentKey = _getDepartureSlotKey();
+      // Find the soonest departure at stop1 to identify which route is next.
+      // +5min rule: skip current slot and the next slot (minimum 10 min ahead).
       const allKeys = _getDaySlotKeys();
-      const currentIdx = allKeys.indexOf(currentKey);
-      const ordered = currentIdx >= 0
-        ? [...allKeys.slice(currentIdx), ...allKeys.slice(0, currentIdx)]
-        : allKeys;
+      const currentIdx = allKeys.indexOf(_getDepartureSlotKey());
+      const startIdx = currentIdx >= 0 ? Math.min(currentIdx + 2, allKeys.length - 1) : 0;
+      const ordered = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
 
       const MAX_CHECKS = 60; // up to 60 × 5-min slots = 5 hours ahead
       let checked = 0;
@@ -1835,13 +1840,21 @@ svg.map-icon {
         if (shape && shape.length >= 2 && startCoord && endCoord) {
           const idxA = nearestShapeIdx(shape, startCoord[0], startCoord[1]);
           const idxB = nearestShapeIdx(shape, endCoord[0], endCoord[1]);
-          if (idxA >= 0 && idxB > idxA) {
-            // Forward direction: slice from boarding stop to alighting stop
-            const seg = shape.slice(idxA, idxB + 1);
-            for (const pt of seg) {
+          // Accept both forward (idxA < idxB) and reverse (idxA > idxB) direction shapes.
+          if (idxA >= 0 && idxB >= 0 && idxA !== idxB) {
+            // Slice from boarding stop to alighting stop; reverse if shape is stored backwards.
+            const raw = idxA < idxB ? shape.slice(idxA, idxB + 1) : shape.slice(idxB, idxA + 1).reverse();
+            // Decimate to at most 80 points to keep the drawn line clean and fast.
+            const step = raw.length > 80 ? Math.ceil(raw.length / 80) : 1;
+            for (let pi = 0; pi < raw.length; pi += step) {
+              const pt = raw[pi];
               const last = stopLineCoords[stopLineCoords.length - 1];
               if (!last || last[0] !== pt[0] || last[1] !== pt[1]) stopLineCoords.push(pt);
             }
+            // Always include the final point of the segment
+            const lastPt = raw[raw.length - 1];
+            const lastAdded = stopLineCoords[stopLineCoords.length - 1];
+            if (!lastAdded || lastAdded[0] !== lastPt[0] || lastAdded[1] !== lastPt[1]) stopLineCoords.push(lastPt);
             segAdded = true;
           }
         }
