@@ -1447,6 +1447,7 @@ svg.map-icon {
       // Try ALL connecting routes at each potential transfer stop and pick the one with the
       // earliest actual departure (within a 4-hour window) to avoid choosing night-only routes.
       if (internalRoute1 && stopsOnRoute1.length){
+        const MAX_TRANSFER_WAIT_MINUTES = 60; // early-exit threshold: accept connection within 1 hour
         const routesAtStop2 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
         await loadGtfsStops();
         _ensureGtfsStopMap();
@@ -1465,7 +1466,8 @@ svg.map-icon {
             // Use a 4-hour (48-slot) limit to avoid picking night-only routes over day buses
             const conn = await findConnectingDep(sid, r, leg1TripId, leg1HHMM, 48);
             if (!conn.entry) continue;
-            if (!bestConn || conn.depTime < bestConn.depTime){
+            // Use _hhmmToMinutes for correct comparison of GTFS extended hours (04:00–35:55)
+            if (!bestConn || _hhmmToMinutes(conn.depTime) < _hhmmToMinutes(bestConn.depTime)){
               bestConn = conn;
               bestTransferRouteId = r;
               bestTransferStop = {
@@ -1479,7 +1481,7 @@ svg.map-icon {
           }
           // Early exit: if we already have a great connection (within 1 hour), no need to keep scanning
           if (bestConn && bestConn.minTime && bestConn.depTime) {
-            if (_hhmmToMinutes(bestConn.depTime) - _hhmmToMinutes(bestConn.minTime) <= 60) break;
+            if (_hhmmToMinutes(bestConn.depTime) - _hhmmToMinutes(bestConn.minTime) <= MAX_TRANSFER_WAIT_MINUTES) break;
           }
         }
         if (bestConn){
