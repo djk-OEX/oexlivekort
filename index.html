@@ -1446,16 +1446,17 @@ svg.map-icon {
         const routesAtStop2for2hop = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
         const leg1TripId2h = e1 ? e1.route_id : null;
         const leg1HHMM2h   = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
+        const MAX_STOPS_2HOP = 60;
         let found2hop = null;
         outer2hop:
-        for (const s1Id of stopsOnRoute1.slice(0, 60)) {
+        for (const s1Id of stopsOnRoute1.slice(0, MAX_STOPS_2HOP)) {
           const sid1 = String(s1Id);
           if (sid1 === String(stop1.stop_id) || sid1 === stop2Id) continue;
           const routesAtS1 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid1) || new Set()) : new Set();
           for (const r2 of routesAtS1) {
             if (r2 === internalRoute1) continue;
             const stopsOnR2 = routeStopsData[r2] || [];
-            for (const s2Id of stopsOnR2.slice(0, 60)) {
+            for (const s2Id of stopsOnR2.slice(0, MAX_STOPS_2HOP)) {
               const sid2 = String(s2Id);
               if (sid2 === sid1 || sid2 === String(stop1.stop_id)) continue;
               const routesAtS2 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid2) || new Set()) : new Set();
@@ -1487,7 +1488,8 @@ svg.map-icon {
               dist: 0
             };
             const conn2 = await findConnectingDep(sid1, r2, leg1TripId2h, leg1HHMM2h);
-            const conn3 = await findConnectingDep(sid2, r3, conn2.entry ? conn2.entry.route_id : null, conn2.depTime || conn2.minTime);
+            const leg2DepOrMinTime = conn2.depTime || conn2.minTime;
+            const conn3 = await findConnectingDep(sid2, r3, conn2.entry ? conn2.entry.route_id : null, leg2DepOrMinTime);
             return [leg1, makeLeg2Transfer(transferStop1, r2, conn2), makeLeg2Transfer(transferStop2, r3, conn3)];
           }
         }
@@ -1548,11 +1550,14 @@ svg.map-icon {
     panel.id = 'oex-transit-panel';
     let html = '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
 
+    const multiTransfer = legs.filter(l => l.isTransfer).length >= 2;
+    let transferCount = 0;
     legs.forEach((leg, i) => {
       const stop = leg.stop;
       if (!stop) return;
       const isFirst = i === 0;
       const isTransfer = !!leg.isTransfer;
+      if (isTransfer) transferCount++;
       const lineBadge = leg.routeShortName ? '<span class="oex-tp-dep-line" style="font-size:15px;padding:2px 8px;">'+escapeHtml(leg.routeShortName)+'</span>' : '';
       // For transfer/connecting legs show "Origin → Headsign" when the departure stop (fromStop) is known.
       // For other legs show only "→ Headsign".
@@ -1562,9 +1567,7 @@ svg.map-icon {
           (leg.fromStop ? escapeHtml(leg.fromStop) + ' → ' : '→ ') +
           escapeHtml(headsignText) + '</span>'
         : '';
-      const multiTransfer = legs.filter(l => l.isTransfer).length >= 2;
-      const transferIdx = isTransfer ? legs.slice(0, i + 1).filter(l => l.isTransfer).length : 0;
-      const stopLabel = isFirst ? 'Fra A' : (isTransfer ? (multiTransfer ? 'Skift ' + transferIdx : 'Skift') : 'Til B');
+      const stopLabel = isFirst ? 'Fra A' : (isTransfer ? (multiTransfer ? 'Skift ' + transferCount : 'Skift') : 'Til B');
       const distText = stop.dist ? ' <span style="color:#bbbbbb;font-size:11px;">('+stop.dist+' m til fods)</span>' : '';
 
       html += '<div class="oex-tp-leg" style="margin-top:'+(isFirst?'4':'10')+'px;padding-top:'+(isFirst?'0':'8')+'px;'+(isFirst?'':'border-top:1px solid #333;')+'">';
