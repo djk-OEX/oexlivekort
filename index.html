@@ -1001,6 +1001,9 @@ svg.map-icon {
 
   // Geographic deduplication threshold: stops within this distance (metres) are considered the same
   const _STOP_PROXIMITY_THRESHOLD_METERS = 50;
+  // Maximum distance (metres) between stop2 and a route's stop to count as "route serves stop2".
+  // Handles direction-split stops that share the same physical location with separate stop_ids.
+  const _STOP2_MATCH_THRESHOLD_METERS = 200;
 
   // Attach a click popup to a route-stop marker; fetches departure times on demand
   function _attachRouteStopPopup(marker, stopName, routeName, stopId){
@@ -1182,9 +1185,11 @@ svg.map-icon {
     try{
       const [routeLookup, routeStopsData] = await Promise.all([
         loadGtfsRoutes(),
-        loadGtfsRouteStops()
+        loadGtfsRouteStops(),
+        loadGtfsStops()
       ]);
       _ensureStopToRoutes();
+      _ensureGtfsStopMap();
 
       const allKeys = _getDaySlotKeys();
       const currentIdx = allKeys.indexOf(_getDepartureSlotKey());
@@ -1320,6 +1325,22 @@ svg.map-icon {
 
       const stop2Id = String(stop2.stop_id);
 
+      // Helper: check whether a given list of stop IDs covers stop2, by exact ID or
+      // by geographic proximity (≤200 m) to handle direction-split stops with separate IDs.
+      const routeServesStop2 = (stopsOnRoute) => {
+        if (stopsOnRoute.some(s => String(s) === stop2Id)) return true;
+        if (stop2 && _gtfsStopMap) {
+          const s2lat = stop2.lat, s2lon = stop2.lon;
+          for (const s of stopsOnRoute) {
+            const sInfo = _gtfsStopMap.get(String(s));
+            if (!sInfo) continue;
+            const sLon = sInfo.lon !== undefined ? sInfo.lon : sInfo.lng;
+            if (_haversineDist(s2lat, s2lon, sInfo.lat, sLon) <= _STOP2_MATCH_THRESHOLD_METERS) return true;
+          }
+        }
+        return false;
+      };
+
       // ── Scan slots from startIdx to find a direct route to stop2 first ──
       // Always prefer a direct route over a transfer; check up to 60 forward windows.
       const orderedFromStart = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
@@ -1336,7 +1357,7 @@ svg.map-icon {
             for (const e of entries){
               const internalRoute = ((_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id);
               const stopsOnRoute = routeStopsData[internalRoute] || [];
-              if (stopsOnRoute.some(s => String(s) === stop2Id)){
+              if (routeServesStop2(stopsOnRoute)){
                 bestDirectEntry = e;
                 break;
               }
@@ -1357,7 +1378,7 @@ svg.map-icon {
       const stopsOnRoute1 = internalRoute1 ? (routeStopsData[internalRoute1] || []) : [];
 
       // Direct route check with the first dep (covers case where all windows were empty)
-      if (internalRoute1 && stopsOnRoute1.some(s => String(s) === stop2Id)){
+      if (internalRoute1 && routeServesStop2(stopsOnRoute1)){
         return [leg1];
       }
 
@@ -1597,32 +1618,41 @@ svg.map-icon {
     if (!hasA) return;
 
     // Get up to 5 nearest stops for point A within 500 m, plus the nearest stop for B.
-    // Multiple candidates for A are tried in distance order until a direct route or valid
-    // transfer is found, so a stop slightly further away (e.g. 307 m, served by 1A→Aarhus H)
-    // wins over the absolute nearest stop (0 m) that only serves unrelated lines like 5A.
+    // Multiple candidates for A are tried in distance order; direct routes are preferred
+    // over transfers, so a stop slightly further away that offers a direct route wins over
+    // the nearest stop that only has a transfer connection.
     const [stop1Candidates, stop2] = await Promise.all([
       hasA ? findNearestGtfsStops(lat1, lng1, 5, 500) : Promise.resolve([]),
       hasB ? findNearestGtfsStop(lat2, lng2) : Promise.resolve(null)
     ]);
 
-    // Try each stop1 candidate in distance order; use the first that yields a direct route
-    // or a valid single-hop transfer leg.  Retain the fallback from the nearest candidate
-    // in case none match.  2-hop (3-leg) results are saved separately as a last resort so
-    // a single-hop result at a further stop still wins over a 2-hop at the nearest stop.
+    // Try each stop1 candidate in distance order; use the first that yields a direct route.
+    // A single-hop transfer is saved as a fallback so a direct route at a farther stop
+    // still wins over a transfer at the nearest stop (the primary goal of multi-candidate
+    // search).  2-hop (3-leg) results are saved separately as a last resort.
     // skipSlots scales with walking distance: max(1, floor(dist/50)) — 1 slot per 50 m.
     let legs = null;
     let stop1 = stop1Candidates[0] || null;
     let best2hopLegs = null;
     let best2hopStop = null;
+    let bestTransferLegs = null;
+    let bestTransferStop = null;
     for (const candidate of stop1Candidates){
       const skipSlots = Math.max(1, Math.floor((candidate.dist || 0) / 50));
       const candidateLegs = await findTransitLegs(candidate, hasB ? stop2 : null, skipSlots);
       const foundDirect = hasB && candidateLegs.length === 1;
       const foundTransfer = hasB && candidateLegs.length === 2 && !!candidateLegs[1].isTransfer;
-      if (!hasB || foundDirect || foundTransfer){
+      if (!hasB || foundDirect){
+        // Direct route (or no destination) — use immediately; no need to check further candidates
         legs = candidateLegs;
         stop1 = candidate;
         break;
+      }
+      // Save the first valid single-hop transfer, then keep searching remaining candidates
+      // for a direct route (which is always preferred over a transfer).
+      if (foundTransfer && !bestTransferLegs){
+        bestTransferLegs = candidateLegs;
+        bestTransferStop = candidate;
       }
       // Save first 2-hop result; only use if no direct/single-hop is found at any candidate
       if (!best2hopLegs && hasB && candidateLegs.length >= 3 && candidateLegs.slice(1).some(l => l.isTransfer)){
@@ -1634,6 +1664,12 @@ svg.map-icon {
         legs = candidateLegs;
         stop1 = candidate;
       }
+    }
+    // Promote single-hop transfer over fallback when no direct route was found
+    const foundDirectAtAnyCandidate = legs && legs.length === 1;
+    if (hasB && bestTransferLegs && !foundDirectAtAnyCandidate){
+      legs = bestTransferLegs;
+      stop1 = bestTransferStop;
     }
     // Promote 2-hop result when no direct or single-hop transfer was found
     if (hasB && best2hopLegs && legs && !(legs.length === 1 || (legs.length === 2 && !!legs[1].isTransfer))){
