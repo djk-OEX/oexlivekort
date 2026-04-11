@@ -1284,8 +1284,8 @@ svg.map-icon {
         // Connecting bus must depart at least 10 min after leg1 arrives at the transfer stop
         let transferMinTime = minTime;
         if (minTime.length >= 5) {
-          const tH0 = parseInt(minTime.substring(0, 2));
-          const tM0 = parseInt(minTime.substring(3, 5));
+          const tH0 = parseInt(minTime.substring(0, 2), 10);
+          const tM0 = parseInt(minTime.substring(3, 5), 10);
           const plusMins = tH0 * 60 + tM0 + 10;
           const pH = Math.floor(plusMins / 60) % 24;
           const pM = plusMins % 60;
@@ -1809,11 +1809,13 @@ svg.map-icon {
       const lon = s.lon !== undefined ? s.lon : s.lng;
       return isValidLatLon(lat, lon) ? [lon, lat] : null;
     };
-    // Return the index of the shape point nearest to [lon, lat] (squared euclidean in deg)
+    // Return the index of the shape point nearest to [lon, lat].
+    // Apply a latitude cosine correction to longitude so distance is isotropic in degrees.
     const nearestShapeIdx = (shape, lon, lat) => {
+      const cosLat = Math.cos(lat * Math.PI / 180);
       let best = -1, bestDist = Infinity;
       for (let i = 0; i < shape.length; i++) {
-        const dx = shape[i][0] - lon, dy = shape[i][1] - lat;
+        const dx = (shape[i][0] - lon) * cosLat, dy = shape[i][1] - lat;
         const d = dx * dx + dy * dy;
         if (d < bestDist) { bestDist = d; best = i; }
       }
