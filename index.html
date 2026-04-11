@@ -1261,7 +1261,7 @@ svg.map-icon {
           const nextM = nextSlotMins % 60;
           const nextSlotKey = String(nextH).padStart(2, '0') + '_' + String(nextM).padStart(2, '0');
           const ki = allSlotKeys.indexOf(nextSlotKey);
-          if (ki >= 0) slotStart = Math.min(ki + skipSlots, allSlotKeys.length - 1);
+          if (ki >= 0) slotStart = Math.min(ki + 1, allSlotKeys.length - 1);
         }
         const orderedSlots = [...allSlotKeys.slice(slotStart), ...allSlotKeys.slice(0, slotStart)];
         let entry = null;
@@ -1525,7 +1525,7 @@ svg.map-icon {
         const l1M = parseInt(leg1HHMM0.substring(3, 5));
         const l1SlotKey = String(l1H).padStart(2, '0') + '_' + String(Math.floor(l1M / 5) * 5).padStart(2, '0');
         const l1Ki = allKeys.indexOf(l1SlotKey);
-        if (l1Ki >= 0) leg2StartIdx = l1Ki;
+        if (l1Ki >= 0) leg2StartIdx = Math.min(l1Ki + 1, allKeys.length - 1);
       }
       const e2 = await getFirstDep(stop2.stop_id, leg2StartIdx);
       const tripId2 = e2 ? e2.route_id : null;
@@ -1596,11 +1596,11 @@ svg.map-icon {
         '<span style="font-size:12px;"><strong>'+stopLabel+':</strong> '+escapeHtml(stop.name)+distText+'</span></div>';
       html += _renderRouteList(leg.deps, leg.routeShortName);
 
-      // Always show clickable "Næste afgang" row
+      // Show "Næste afgang" as plain info row
       const nextTime = (leg.nextDep && leg.nextDep.nextTime) ||
                        (leg.deps && leg.deps.length && leg.deps[0].time) || null;
       if (nextTime){
-        html += '<div id="oex-next-dep-row-'+i+'" class="oex-tp-row oex-next-dep-btn" title="Klik for at vise/skjule stoppesteder på kortet">🚌 Næste afgang: '+escapeHtml(nextTime)+'</div>';
+        html += '<div class="oex-tp-row" style="margin-top:5px;">🚌 Næste afgang: '+escapeHtml(nextTime)+'</div>';
       }
       html += '</div>';
     });
@@ -1755,87 +1755,22 @@ svg.map-icon {
       }
     }
 
-    if (hasA && hasB){
-      try{
-        const url = 'https://atlas.microsoft.com/route/directions/json'+
-          '?api-version=1.0'+
-          '&travelMode=bus'+
-          '&subscription-key='+encodeURIComponent(AZURE_MAPS_KEY)+
-          '&query='+encodeURIComponent(`${lat1},${lng1}:${lat2},${lng2}`);
-        const res = await fetch(url, { credentials:'omit' });
-        if (res.ok){
-          const data = await res.json();
-          const route = (((data||{}).routes||[])[0]||{});
-          let coords = [];
-          const routeLegs = route.legs || [];
-          routeLegs.forEach(leg=>{ (leg.points||[]).forEach(p=>{ if(isValidLatLon(p.latitude, p.longitude)){ coords.push([p.longitude,p.latitude]); } }); });
-          if (coords.length >= 2){
-            routeSource.add(new atlas.data.Feature(new atlas.data.LineString(coords)));
-            const summary = route.summary || {};
-            if (summary.lengthInMeters && summary.travelTimeInSeconds){
-              const label = formatRouteLabel(summary.lengthInMeters, summary.travelTimeInSeconds);
-              const mid = routeMidpoint(coords);
-              routeLabelMarker = new atlas.HtmlMarker({
-                position: mid,
-                htmlContent: '<div style="background:#000000;color:#ffffff;padding:4px 10px;border-radius:4px;border:2px solid #00B0F8;font-size:13px;font-weight:bold;white-space:nowrap;font-family:sans-serif;">🚌 '+label+'</div>'
-              });
-              map.markers.add(routeLabelMarker);
-            }
-            try { map.setCamera({ bounds: atlas.data.BoundingBox.fromLatLngs(coords), padding: 60, duration: 500 }); } catch(e) {}
-            setTimeout(safeResize, 50);
-          }
-        }
-      }catch(e){ console.warn('Bus route fejl (forventet):', e); }
+    // Draw dashed straight line connecting all bus stops: A → Shift(s) → B
+    const stopLineCoords = [];
+    if (stop1 && isValidLatLon(stop1.lat, stop1.lon)) stopLineCoords.push([stop1.lon, stop1.lat]);
+    legs.forEach((leg, i) => {
+      if (i > 0 && leg.isTransfer && leg.stop && isValidLatLon(leg.stop.lat, leg.stop.lon)) {
+        stopLineCoords.push([leg.stop.lon, leg.stop.lat]);
+      }
+    });
+    if (stop2 && isValidLatLon(stop2.lat, stop2.lon)) stopLineCoords.push([stop2.lon, stop2.lat]);
+    if (stopLineCoords.length >= 2) {
+      routeSource.add(new atlas.data.Feature(new atlas.data.LineString(stopLineCoords)));
+      try { map.setCamera({ bounds: atlas.data.BoundingBox.fromLatLngs(stopLineCoords), padding: 60, duration: 500 }); } catch(e) {}
+      setTimeout(safeResize, 50);
     }
 
     showTransitPanel(legs, hasB);
-
-    // Attach per-leg "Næste afgang" click handlers (toggle route stop dots for that leg)
-    _activeLegIdx = null;
-    legs.forEach((leg, i) => {
-      const el = document.getElementById('oex-next-dep-row-'+i);
-      if (!el) return;
-      el.addEventListener('click', async function(ev) {
-        ev.stopPropagation();
-        if (_activeLegIdx === i){
-          // Toggle off
-          _clearRouteStopDots();
-          _routeDotsVisible = false;
-          _activeLegIdx = null;
-          el.classList.remove('active');
-        } else {
-          // Switch to this leg
-          _clearRouteStopDots();
-          legs.forEach((_, j) => {
-            const prev = document.getElementById('oex-next-dep-row-'+j);
-            if (prev) prev.classList.remove('active');
-          });
-          _activeLegIdx = i;
-          _routeDotsVisible = true;
-          el.classList.add('active');
-          try {
-            const shownPos = [];
-            const shownIds = new Set([String(leg.stop.stop_id)]);
-            // Determine end stop for segment filtering:
-            // Leg 0 (A): show only up to the next leg's stop (transfer or B).
-            // Transfer legs: show from transfer stop to the next leg's stop (or B if last transfer).
-            // Non-transfer last leg: no segment filter (independent fallback leg).
-            let segEndStopId = null;
-            if (i === 0 && legs.length >= 2 && legs[1].stop) {
-              segEndStopId = String(legs[1].stop.stop_id);
-            } else if (leg.isTransfer) {
-              const nextLeg = legs[i + 1];
-              if (nextLeg && nextLeg.stop) {
-                segEndStopId = String(nextLeg.stop.stop_id);
-              } else if (stop2) {
-                segEndStopId = String(stop2.stop_id);
-              }
-            }
-            await _findAndShowRouteStops(leg.stop, shownIds, shownPos, leg.tripId, segEndStopId);
-          } catch(err) { console.warn('Route dots fejl:', err); }
-        }
-      });
-    });
   }
 
   function resetOptional(){ ["addr2","name2","lat2","lng2"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; }); try { localStorage.removeItem("oex_addr2"); } catch(e) {} const s2 = document.getElementById("sug2"); if (s2) s2.style.display="none"; clearBusDisplay(); updateMapFromForm(false); }
