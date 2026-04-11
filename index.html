@@ -1150,9 +1150,11 @@ svg.map-icon {
   // - Single leg if stop2 is on the same route as stop1 (direct route)
   // - Two legs if a transfer stop is found (route1 → transfer → route2 → stop2)
   // - Falls back to two independent legs if no connection is found
+  // skipSlots: number of 5-min slots to skip from current time (based on walking distance to stop1)
   // Returns array of leg objects: { stop, routeShortName, routeLongName, routeHeadsign, tripId, internalRouteId, isTransfer? }
-  async function findTransitLegs(stop1, stop2){
+  async function findTransitLegs(stop1, stop2, skipSlots){
     if (!stop1) return [];
+    if (skipSlots === undefined) skipSlots = 1;
     try{
       const [routeLookup, routeStopsData] = await Promise.all([
         loadGtfsRoutes(),
@@ -1160,8 +1162,10 @@ svg.map-icon {
       ]);
       _ensureStopToRoutes();
 
-      const slotKey = _getDepartureSlotKey();
-      const depsWindow = await _loadDepartureWindow(slotKey);
+      const allKeys = _getDaySlotKeys();
+      const currentIdx = allKeys.indexOf(_getDepartureSlotKey());
+      // Start all searches at currentIdx + skipSlots to give walking time to the stop
+      const startIdx = currentIdx >= 0 ? Math.min(currentIdx + skipSlots, allKeys.length - 1) : skipSlots;
 
       // Helper: return a dep's headsign using inline field then trips_headsign lookup
       const depHeadsign = (e) => e ? (e.headsign || (_gtfsTripHeadsign && _gtfsTripHeadsign[e.route_id]) || '') : '';
@@ -1170,15 +1174,10 @@ svg.map-icon {
       const depLongName = (internalRouteId) =>
         (internalRouteId && _gtfsRouteLongLookup && _gtfsRouteLongLookup[internalRouteId]) || '';
 
-      // Helper: get first dep entry for a stop in the current (or next found) window
+      // Helper: get first dep entry for a stop starting from startIdx (skip-adjusted)
       const getFirstDep = async (stopId) => {
         const sid = String(stopId);
-        const entries = depsWindow[sid];
-        if (entries && entries.length) return entries[0];
-        // Scan next slots (up to 60) to find first available departure
-        const allKeys = _getDaySlotKeys();
-        const curIdx = allKeys.indexOf(slotKey);
-        const ordered = curIdx >= 0 ? [...allKeys.slice(curIdx+1), ...allKeys.slice(0, curIdx+1)] : allKeys;
+        const ordered = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
         for (let i = 0; i < Math.min(60, ordered.length); i++){
           try{
             const r = await fetch('data/departures_5min/'+ordered[i]+'.json.gz');
@@ -1212,30 +1211,43 @@ svg.map-icon {
 
       const stop2Id = String(stop2.stop_id);
 
-      // ── Try ALL departures at stop1 in current window to find a direct route to stop2 ──
-      // This is key for long-distance routes: the first departure may be a local bus while
-      // a later departure in the same window goes directly to stop2.
-      const stop1Entries = depsWindow[String(stop1.stop_id)] || [];
+      // ── Scan slots from startIdx to find a direct route to stop2 first ──
+      // Always prefer a direct route over a transfer; check up to 60 forward windows.
+      const orderedFromStart = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
       let bestDirectEntry = null;
-      for (const e of stop1Entries){
-        const internalRoute = ((_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id);
-        const stopsOnRoute = routeStopsData[internalRoute] || [];
-        if (stopsOnRoute.some(s => String(s) === stop2Id)){
-          bestDirectEntry = e;
-          break;
-        }
+      let firstEntry = null; // first departure at stop1 found (fallback for transfer search)
+      for (let i = 0; i < Math.min(60, orderedFromStart.length); i++){
+        try{
+          const r = await fetch('data/departures_5min/'+orderedFromStart[i]+'.json.gz');
+          if (!r.ok) continue;
+          const d = await r.json();
+          const entries = d[String(stop1.stop_id)];
+          if (entries && entries.length){
+            if (!firstEntry) firstEntry = entries[0];
+            for (const e of entries){
+              const internalRoute = ((_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id);
+              const stopsOnRoute = routeStopsData[internalRoute] || [];
+              if (stopsOnRoute.some(s => String(s) === stop2Id)){
+                bestDirectEntry = e;
+                break;
+              }
+            }
+          }
+        }catch(_){ continue; }
+        if (bestDirectEntry) break;
       }
+
       if (bestDirectEntry){
         return [makeLeg1(bestDirectEntry)];
       }
 
-      // ── No direct route found in current window – fall back to first dep and do transfer search ──
-      const e1 = stop1Entries.length ? stop1Entries[0] : await getFirstDep(stop1.stop_id);
+      // ── No direct route found – fall back to first dep and do transfer search ──
+      const e1 = firstEntry || await getFirstDep(stop1.stop_id);
       const leg1 = makeLeg1(e1);
       const { internalRouteId: internalRoute1 } = leg1;
       const stopsOnRoute1 = internalRoute1 ? (routeStopsData[internalRoute1] || []) : [];
 
-      // Direct route check with the first dep (covers case where current window was empty)
+      // Direct route check with the first dep (covers case where all windows were empty)
       if (internalRoute1 && stopsOnRoute1.some(s => String(s) === stop2Id)){
         return [leg1];
       }
@@ -1268,7 +1280,7 @@ svg.map-icon {
           };
 
           // Find an actual trip departure for the transfer route at the transfer stop,
-          // starting from leg1's departure time so the two legs are independently timed.
+          // starting from leg1's departure time so leg2 departs after leg1 arrives.
           const leg1HHMM = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
           const allSlotKeys = _getDaySlotKeys();
           let slotStart = 0;
@@ -1402,8 +1414,13 @@ svg.map-icon {
       hasB ? findNearestGtfsStop(lat2, lng2) : Promise.resolve(null)
     ]);
 
+    // Calculate how many 5-min slots to skip based on walking distance to nearest stop.
+    // Base: always skip 1 slot (5 min buffer). Extra: +1 skip per 50 m of walking distance.
+    // e.g. 0–49 m → skip 1, 50–99 m → skip 1, 100–149 m → skip 2, 150+ m → skip 3, etc.
+    const skipSlots = stop1 ? Math.max(1, Math.floor((stop1.dist || 0) / 50)) : 1;
+
     // Determine legs (direct route or with transfer)
-    const legs = await findTransitLegs(stop1, hasB ? stop2 : null);
+    const legs = await findTransitLegs(stop1, hasB ? stop2 : null, skipSlots);
 
     // Fetch departures and nextDep for each leg
     for (const leg of legs){
