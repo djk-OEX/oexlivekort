@@ -1494,7 +1494,7 @@ svg.map-icon {
     for (const candidate of stop1Candidates){
       const skipSlots = Math.max(1, Math.floor((candidate.dist || 0) / 50));
       const candidateLegs = await findTransitLegs(candidate, hasB ? stop2 : null, skipSlots);
-      const foundDirect   = hasB && candidateLegs.length === 1;
+      const foundDirect = hasB && candidateLegs.length === 1;
       const foundTransfer = hasB && candidateLegs.length === 2 && !!candidateLegs[1].isTransfer;
       if (!hasB || foundDirect || foundTransfer){
         legs = candidateLegs;
