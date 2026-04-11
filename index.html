@@ -459,7 +459,7 @@ svg.map-icon {
       map.layers.add([bubbleLayer, symbolLayer], "labels");
 
       routeSource = new atlas.source.DataSource(); map.sources.add(routeSource);
-      routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85 });
+      routeLayer = new atlas.layer.LineLayer(routeSource, null, { strokeColor: OEX_BLUE, strokeWidth: 4, lineJoin: "round", lineCap: "round", opacity: 0.85, strokeDashArray: [4, 3] });
       map.layers.add(routeLayer, "labels");
 
 
@@ -1503,59 +1503,67 @@ svg.map-icon {
         }
       }
 
-      // ── 2-hop transfer: route1 → transfer1 → route2 → transfer2 → route3 → stop2 ──
-      // Used when no single-hop path exists (e.g. local bus → intercity → local bus in another city).
+      // ── Multi-hop BFS: up to 4 shifts (2–4 transfers, 3–5 legs) ──
+      // BFS through the route graph; finds the shortest transfer path to stop2.
+      // Replaces the previous hardcoded 2-hop section and extends support to 4 transfers.
       if (internalRoute1 && stopsOnRoute1.length) {
         await loadGtfsStops();
         _ensureGtfsStopMap();
-        const routesAtStop2for2hop = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
-        const leg1TripId2h = e1 ? e1.route_id : null;
-        const leg1HHMM2h   = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
-        const MAX_STOPS_2HOP = 60;
-        let found2hop = null;
-        outer2hop:
-        for (const s1Id of stopsOnRoute1.slice(0, MAX_STOPS_2HOP)) {
-          const sid1 = String(s1Id);
-          if (sid1 === String(stop1.stop_id) || sid1 === stop2Id) continue;
-          const routesAtS1 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid1) || new Set()) : new Set();
-          for (const r2 of routesAtS1) {
-            if (r2 === internalRoute1) continue;
-            const stopsOnR2 = routeStopsData[r2] || [];
-            for (const s2Id of stopsOnR2.slice(0, MAX_STOPS_2HOP)) {
-              const sid2 = String(s2Id);
-              if (sid2 === sid1 || sid2 === String(stop1.stop_id)) continue;
-              const routesAtS2 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid2) || new Set()) : new Set();
-              let r3 = null;
-              for (const r of routesAtS2) {
-                if (routesAtStop2for2hop.has(r)) { r3 = r; break; }
+        const routesAtStop2bfs = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
+        const leg1TripId_bfs = e1 ? e1.route_id : null;
+        const leg1HHMM_bfs   = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
+        const MAX_HOPS = 4;    // allow up to 4 transfers (5 legs total)
+        const MAX_STOPS_BFS = 40; // max stops examined per route per BFS level
+        const visitedRoutes = new Set([internalRoute1]);
+        // Each BFS state: { routeId, stops[], path: [{transferStopId, routeId}] }
+        let queue = [{ routeId: internalRoute1, stops: stopsOnRoute1.slice(0, MAX_STOPS_BFS), path: [] }];
+        let bfsFoundPath = null;
+        for (let hop = 0; hop < MAX_HOPS && !bfsFoundPath; hop++) {
+          const nextQueue = [];
+          for (const state of queue) {
+            if (bfsFoundPath) break;
+            for (const stopId of state.stops) {
+              const sid = String(stopId);
+              if (sid === String(stop1.stop_id) || sid === stop2Id) continue;
+              const routesAtSid = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid) || new Set()) : new Set();
+              for (const r of routesAtSid) {
+                if (visitedRoutes.has(r)) continue;
+                visitedRoutes.add(r);
+                const newPath = [...state.path, { transferStopId: sid, routeId: r }];
+                if (routesAtStop2bfs.has(r)) { bfsFoundPath = newPath; break; }
+                if (hop < MAX_HOPS - 1) {
+                  const stopsOnR = (routeStopsData[r] || []).slice(0, MAX_STOPS_BFS);
+                  nextQueue.push({ routeId: r, stops: stopsOnR, path: newPath });
+                }
               }
-              if (!r3) continue;
-              found2hop = { sid1, r2, sid2, r3 };
-              break outer2hop;
+              if (bfsFoundPath) break;
             }
           }
+          queue = nextQueue;
+          if (!queue.length) break;
         }
-        if (found2hop) {
-          const { sid1, r2, sid2, r3 } = found2hop;
-          const stopInfo1 = _gtfsStopMap.get(sid1);
-          const stopInfo2 = _gtfsStopMap.get(sid2);
-          if (stopInfo1 && stopInfo2) {
-            const transferStop1 = {
-              stop_id: sid1, name: stopInfo1.name || sid1,
-              lat: stopInfo1.lat,
-              lon: stopInfo1.lon !== undefined ? stopInfo1.lon : stopInfo1.lng,
+        if (bfsFoundPath) {
+          const transferLegs = [];
+          let prevTripId = leg1TripId_bfs;
+          let prevHHMM   = leg1HHMM_bfs;
+          let pathOk = true;
+          for (const hop of bfsFoundPath) {
+            const stopInfo = _gtfsStopMap.get(hop.transferStopId);
+            if (!stopInfo) { pathOk = false; break; }
+            const transferStop = {
+              stop_id: hop.transferStopId,
+              name: stopInfo.name || hop.transferStopId,
+              lat: stopInfo.lat,
+              lon: stopInfo.lon !== undefined ? stopInfo.lon : stopInfo.lng,
               dist: 0
             };
-            const transferStop2 = {
-              stop_id: sid2, name: stopInfo2.name || sid2,
-              lat: stopInfo2.lat,
-              lon: stopInfo2.lon !== undefined ? stopInfo2.lon : stopInfo2.lng,
-              dist: 0
-            };
-            const conn2 = await findConnectingDep(sid1, r2, leg1TripId2h, leg1HHMM2h);
-            const leg2DepOrMinTime = conn2.depTime || conn2.minTime;
-            const conn3 = await findConnectingDep(sid2, r3, conn2.entry ? conn2.entry.route_id : null, leg2DepOrMinTime);
-            return [leg1, makeLeg2Transfer(transferStop1, r2, conn2), makeLeg2Transfer(transferStop2, r3, conn3)];
+            const conn = await findConnectingDep(hop.transferStopId, hop.routeId, prevTripId, prevHHMM);
+            transferLegs.push(makeLeg2Transfer(transferStop, hop.routeId, conn));
+            prevTripId = conn.entry ? conn.entry.route_id : null;
+            prevHHMM   = conn.depTime || conn.minTime;
+          }
+          if (pathOk && transferLegs.length === bfsFoundPath.length) {
+            return [leg1, ...transferLegs];
           }
         }
       }
