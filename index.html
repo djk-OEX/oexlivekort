@@ -875,28 +875,35 @@ svg.map-icon {
     }
   }
 
-  async function findNearestGtfsStop(lat, lng, radiusMeters){
+  // Returns up to maxCount nearest GTFS stops within radiusMeters, sorted by distance.
+  async function findNearestGtfsStops(lat, lng, maxCount, radiusMeters){
+    if (maxCount === undefined) maxCount = 1;
     if (radiusMeters === undefined) radiusMeters = 800;
     try{
       const stops = await loadGtfsStops();
-      if (!stops.length) return null;
-      // Begrænset bounding box for hurtig filtrering
+      if (!stops.length) return [];
       const latDelta = radiusMeters / 111320;
       const lonDelta = radiusMeters / (111320 * Math.cos(lat * Math.PI / 180));
-      let best = null, bestDist = Infinity;
+      const candidates = [];
       for (let i = 0; i < stops.length; i++){
         const s = stops[i];
         if (s.lat < lat - latDelta || s.lat > lat + latDelta) continue;
         const sLon = s.lon !== undefined ? s.lon : s.lng;
         if (sLon < lng - lonDelta || sLon > lng + lonDelta) continue;
         const d = _haversineDist(lat, lng, s.lat, sLon);
-        if (d < bestDist){ bestDist = d; best = s; }
+        if (d <= radiusMeters){
+          const stopId = s.stop_id !== undefined ? s.stop_id : s.id;
+          candidates.push({ stop_id: stopId, name: s.name, lat: s.lat, lon: sLon, dist: Math.round(d) });
+        }
       }
-      if (!best || bestDist > radiusMeters) return null;
-      const bestLon = best.lon !== undefined ? best.lon : best.lng;
-      const stopId = best.stop_id !== undefined ? best.stop_id : best.id;
-      return { stop_id: stopId, name: best.name, lat: best.lat, lon: bestLon, dist: Math.round(bestDist) };
-    }catch(e){ console.warn('findNearestGtfsStop fejl:', e); return null; }
+      candidates.sort((a, b) => a.dist - b.dist);
+      return candidates.slice(0, maxCount);
+    }catch(e){ console.warn('findNearestGtfsStops fejl:', e); return []; }
+  }
+
+  async function findNearestGtfsStop(lat, lng, radiusMeters){
+    const results = await findNearestGtfsStops(lat, lng, 1, radiusMeters);
+    return results.length ? results[0] : null;
   }
 
   async function fetchGtfsDepartures(stopId){
@@ -1470,21 +1477,37 @@ svg.map-icon {
     const hasB = isValidLatLon(lat2, lng2);
     if (!hasA) return;
 
-    const [stop1, stop2] = await Promise.all([
-      hasA ? findNearestGtfsStop(lat1, lng1) : Promise.resolve(null),
+    // Get up to 5 nearest stops for point A within 500 m, plus the nearest stop for B.
+    // Multiple candidates for A are tried in distance order until a direct route or valid
+    // transfer is found, so a stop slightly further away (e.g. 307 m, served by 1A→Aarhus H)
+    // wins over the absolute nearest stop (0 m) that only serves unrelated lines like 5A.
+    const [stop1Candidates, stop2] = await Promise.all([
+      hasA ? findNearestGtfsStops(lat1, lng1, 5, 500) : Promise.resolve([]),
       hasB ? findNearestGtfsStop(lat2, lng2) : Promise.resolve(null)
     ]);
 
-    // Calculate how many 5-min slots to skip based on walking distance to nearest stop.
-    // Formula: max(1, floor(dist / 50)) — always at least 1 slot (5 min buffer).
-    // 0–49 m → 1 skip (21_10 skipped → search from 21_15)
-    // 50–99 m → 1 skip  (same as above; floor(50/50)=1)
-    // 100–149 m → 2 skips (21_10 + 21_15 skipped → search from 21_20)
-    // 150+ m  → 3 skips  (→ search from 21_25), and so on every 50 m
-    const skipSlots = stop1 ? Math.max(1, Math.floor((stop1.dist || 0) / 50)) : 1;
-
-    // Determine legs (direct route or with transfer)
-    const legs = await findTransitLegs(stop1, hasB ? stop2 : null, skipSlots);
+    // Try each stop1 candidate in distance order; use the first that yields a direct route
+    // or a valid transfer leg.  Retain the fallback from the nearest candidate in case none match.
+    // skipSlots scales with walking distance: max(1, floor(dist/50)) — 1 slot per 50 m.
+    let legs = null;
+    let stop1 = stop1Candidates[0] || null;
+    for (const candidate of stop1Candidates){
+      const skipSlots = Math.max(1, Math.floor((candidate.dist || 0) / 50));
+      const candidateLegs = await findTransitLegs(candidate, hasB ? stop2 : null, skipSlots);
+      const foundDirect   = hasB && candidateLegs.length === 1;
+      const foundTransfer = hasB && candidateLegs.length === 2 && !!candidateLegs[1].isTransfer;
+      if (!hasB || foundDirect || foundTransfer){
+        legs = candidateLegs;
+        stop1 = candidate;
+        break;
+      }
+      // Keep the fallback result from the nearest candidate if nothing better turns up
+      if (!legs){
+        legs = candidateLegs;
+        stop1 = candidate;
+      }
+    }
+    if (!legs) legs = [];
 
     // Fetch departures and nextDep for each leg
     for (const leg of legs){
