@@ -787,6 +787,7 @@ svg.map-icon {
   let _gtfsShapesLoading = null;
   let _gtfsTripToShape = null;      // trip_id → shape_id (from trip_to_shape.json)
   let _gtfsTripToShapeLoading = null;
+  let _gtfsRouteToShape = null;     // route_id → shape_id (from route_to_shape.json)
 
   async function loadGtfsStops(){
     if (_gtfsStops) return _gtfsStops;
@@ -857,13 +858,15 @@ svg.map-icon {
     if (_gtfsShapesLoading) return _gtfsShapesLoading;
     _gtfsShapesLoading = Promise.all([
       fetch('data/shapes.json').then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('data/trip_to_shape.json').then(r => r.ok ? r.json() : {}).catch(() => ({}))
-    ]).then(([shapes, tripToShape]) => {
+      fetch('data/trip_to_shape.json').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('data/route_to_shape.json').then(r => r.ok ? r.json() : {}).catch(() => ({}))
+    ]).then(([shapes, tripToShape, routeToShape]) => {
       _gtfsShapes = (shapes && typeof shapes === 'object') ? shapes : {};
       _gtfsTripToShape = (tripToShape && typeof tripToShape === 'object') ? tripToShape : {};
+      _gtfsRouteToShape = (routeToShape && typeof routeToShape === 'object') ? routeToShape : {};
       _gtfsShapesLoading = null;
       return _gtfsShapes;
-    }).catch(e => { console.warn('loadGtfsShapes fejl:', e); _gtfsShapes = {}; _gtfsTripToShape = {}; _gtfsShapesLoading = null; return _gtfsShapes; });
+    }).catch(e => { console.warn('loadGtfsShapes fejl:', e); _gtfsShapes = {}; _gtfsTripToShape = {}; _gtfsRouteToShape = {}; _gtfsShapesLoading = null; return _gtfsShapes; });
     return _gtfsShapesLoading;
   }
 
@@ -1874,7 +1877,8 @@ svg.map-icon {
       if (nextStop) {
         const startCoord = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
         const endCoord   = stopCoordFn(nextStop.stop_id) || (isValidLatLon(nextStop.lat, nextStop.lon) ? [nextStop.lon, nextStop.lat] : null);
-        const shapeId = (leg.tripId && _gtfsTripToShape) ? _gtfsTripToShape[leg.tripId] : null;
+        const shapeId = (leg.internalRouteId && _gtfsRouteToShape) ? _gtfsRouteToShape[leg.internalRouteId]
+          : (leg.tripId && _gtfsTripToShape) ? _gtfsTripToShape[leg.tripId] : null;
         const shape   = (shapeId && _gtfsShapes) ? _gtfsShapes[shapeId] : null;
         if (shape && shape.length >= 2 && startCoord && endCoord) {
           const idxA = nearestShapeIdx(shape, startCoord[0], startCoord[1]);
