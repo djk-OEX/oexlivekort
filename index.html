@@ -783,6 +783,10 @@ svg.map-icon {
   let _depsCacheData = null;        // currently cached departure file data
   let _gtfsStopMap = null;          // stop_id → stop object (built lazily)
   let _gtfsStopToRoutes = null;     // stop_id → Set<internal_route_id> (built lazily)
+  let _gtfsShapes = null;           // shape_id → [[lon, lat], ...] (from shapes.json)
+  let _gtfsShapesLoading = null;
+  let _gtfsTripToShape = null;      // trip_id → shape_id (from trip_to_shape.json)
+  let _gtfsTripToShapeLoading = null;
 
   async function loadGtfsStops(){
     if (_gtfsStops) return _gtfsStops;
@@ -846,6 +850,21 @@ svg.map-icon {
       .then(data => { _gtfsRouteStops = (data && typeof data === 'object') ? data : {}; _gtfsRouteStopsLoading = null; return _gtfsRouteStops; })
       .catch(e => { console.warn('loadGtfsRouteStops fejl:', e); _gtfsRouteStops = {}; _gtfsRouteStopsLoading = null; return _gtfsRouteStops; });
     return _gtfsRouteStopsLoading;
+  }
+
+  async function loadGtfsShapes(){
+    if (_gtfsShapes) return _gtfsShapes;
+    if (_gtfsShapesLoading) return _gtfsShapesLoading;
+    _gtfsShapesLoading = Promise.all([
+      fetch('data/shapes.json').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('data/trip_to_shape.json').then(r => r.ok ? r.json() : {}).catch(() => ({}))
+    ]).then(([shapes, tripToShape]) => {
+      _gtfsShapes = (shapes && typeof shapes === 'object') ? shapes : {};
+      _gtfsTripToShape = (tripToShape && typeof tripToShape === 'object') ? tripToShape : {};
+      _gtfsShapesLoading = null;
+      return _gtfsShapes;
+    }).catch(e => { console.warn('loadGtfsShapes fejl:', e); _gtfsShapes = {}; _gtfsTripToShape = {}; _gtfsShapesLoading = null; return _gtfsShapes; });
+    return _gtfsShapesLoading;
   }
 
   function _getDepartureSlotKey(){
@@ -1191,7 +1210,7 @@ svg.map-icon {
   // Returns array of leg objects: { stop, routeShortName, routeLongName, routeHeadsign, tripId, internalRouteId, isTransfer? }
   async function findTransitLegs(stop1, stop2, skipSlots){
     if (!stop1) return [];
-    if (skipSlots === undefined) skipSlots = 1;
+    if (skipSlots === undefined) skipSlots = 2;
     try{
       const [routeLookup, routeStopsData] = await Promise.all([
         loadGtfsRoutes(),
@@ -1262,16 +1281,26 @@ svg.map-icon {
           }
         }
         const minTime = arrivalHHMM || (prevHHMM || '');
-        let slotStart = 0;
+        // Connecting bus must depart at least 10 min after leg1 arrives at the transfer stop
+        let transferMinTime = minTime;
         if (minTime.length >= 5) {
-          const tH = parseInt(minTime.substring(0, 2));
-          const tM = parseInt(minTime.substring(3, 5));
+          const tH0 = parseInt(minTime.substring(0, 2), 10);
+          const tM0 = parseInt(minTime.substring(3, 5), 10);
+          const plusMins = tH0 * 60 + tM0 + 10;
+          const pH = Math.floor(plusMins / 60) % 24;
+          const pM = plusMins % 60;
+          transferMinTime = String(pH).padStart(2, '0') + ':' + String(pM).padStart(2, '0');
+        }
+        let slotStart = 0;
+        if (transferMinTime.length >= 5) {
+          const tH = parseInt(transferMinTime.substring(0, 2));
+          const tM = parseInt(transferMinTime.substring(3, 5));
           const nextSlotMins = Math.ceil((tH * 60 + tM) / 5) * 5;
           const nextH = Math.floor(nextSlotMins / 60);
           const nextM = nextSlotMins % 60;
           const nextSlotKey = String(nextH).padStart(2, '0') + '_' + String(nextM).padStart(2, '0');
           const ki = allSlotKeys.indexOf(nextSlotKey);
-          if (ki >= 0) slotStart = Math.min(ki + 1, allSlotKeys.length - 1);
+          if (ki >= 0) slotStart = Math.min(ki, allSlotKeys.length - 1);
         }
         const orderedSlots = [...allSlotKeys.slice(slotStart), ...allSlotKeys.slice(0, slotStart)];
         let entry = null;
@@ -1286,7 +1315,7 @@ svg.map-icon {
                 const resolvedRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
                 if (resolvedRouteId === transferRouteId) {
                   const dep2HHMM = (ent2.departure || ent2.arrival || '').substring(0, 5);
-                  if (minTime.length >= 5 && dep2HHMM.length >= 5 && dep2HHMM < minTime) continue;
+                  if (transferMinTime.length >= 5 && dep2HHMM.length >= 5 && dep2HHMM < transferMinTime) continue;
                   entry = ent2; break;
                 }
               }
@@ -1294,7 +1323,7 @@ svg.map-icon {
           } catch(_) {}
         }
         const depTime = entry ? (entry.departure || entry.arrival || '').substring(0, 5) : '';
-        return { entry, depTime, minTime };
+        return { entry, depTime, minTime: transferMinTime };
       };
 
       // Helper: build a transfer leg object from a connecting dep result.
@@ -1640,7 +1669,8 @@ svg.map-icon {
     // A single-hop transfer is saved as a fallback so a direct route at a farther stop
     // still wins over a transfer at the nearest stop (the primary goal of multi-candidate
     // search).  2-hop (3-leg) results are saved separately as a last resort.
-    // skipSlots scales with walking distance: max(1, floor(dist/50)) — 1 slot per 50 m.
+    // skipSlots scales with walking distance: max(2, floor(dist/50)) — always skip at least 2 slots
+    // (current + next 5-min window) so the earliest possible boarding is 10 min ahead.
     let legs = null;
     let stop1 = stop1Candidates[0] || null;
     let best2hopLegs = null;
@@ -1648,7 +1678,7 @@ svg.map-icon {
     let bestTransferLegs = null;
     let bestTransferStop = null;
     for (const candidate of stop1Candidates){
-      const skipSlots = Math.max(1, Math.floor((candidate.dist || 0) / 50));
+      const skipSlots = Math.max(2, Math.floor((candidate.dist || 0) / 50));
       const candidateLegs = await findTransitLegs(candidate, hasB ? stop2 : null, skipSlots);
       const foundDirect = hasB && candidateLegs.length === 1;
       const foundTransfer = hasB && candidateLegs.length === 2 && !!candidateLegs[1].isTransfer;
@@ -1765,12 +1795,13 @@ svg.map-icon {
       }
     }
 
-    // Draw dashed line connecting all bus stops: A → route stops → Shift(s) → route stops → B
-    // Builds polyline through the actual stops on each leg's route segment; falls back to
-    // straight line between endpoints when route stop data is unavailable.
-    const routeStopsForLine = await loadGtfsRouteStops();
+    // Draw route line using GTFS shapes for exact geometry (forward direction only).
+    // For each leg, look up the trip's shape, find nearest shape points to boarding
+    // and alighting stops, then slice forward (ascending sequence). Falls back to a
+    // straight line between key stops if shapes data is unavailable.
     await loadGtfsStops();
     _ensureGtfsStopMap();
+    await loadGtfsShapes();
     const stopCoordFn = (sid) => {
       const s = _gtfsStopMap.get(String(sid));
       if (!s) return null;
@@ -1778,34 +1809,45 @@ svg.map-icon {
       const lon = s.lon !== undefined ? s.lon : s.lng;
       return isValidLatLon(lat, lon) ? [lon, lat] : null;
     };
+    // Return the index of the shape point nearest to [lon, lat].
+    // Apply a latitude cosine correction to longitude so distance is isotropic in degrees.
+    const nearestShapeIdx = (shape, lon, lat) => {
+      const cosLat = Math.cos(lat * Math.PI / 180);
+      let best = -1, bestDist = Infinity;
+      for (let i = 0; i < shape.length; i++) {
+        const dx = (shape[i][0] - lon) * cosLat, dy = shape[i][1] - lat;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      return best;
+    };
     const stopLineCoords = [];
     for (let i = 0; i < legs.length; i++) {
       const leg = legs[i];
       if (!leg.stop) continue;
-      const nextLeg = legs[i + 1];
-      const endStop = nextLeg ? nextLeg.stop : (hasB ? stop2 : null);
-      const routeIds = leg.internalRouteId ? (routeStopsForLine[leg.internalRouteId] || []) : [];
-      let added = false;
-      if (routeIds.length >= 2 && endStop && endStop.stop_id) {
-        const startSid = String(leg.stop.stop_id);
-        const endSid   = String(endStop.stop_id);
-        const idx1 = routeIds.findIndex(s => String(s) === startSid);
-        const idx2 = routeIds.findIndex(s => String(s) === endSid);
-        if (idx1 >= 0 && idx2 >= 0) {
-          const seg = idx1 <= idx2
-            ? routeIds.slice(idx1, idx2 + 1)
-            : routeIds.slice(idx2, idx1 + 1).reverse();
-          const segCoords = seg.map(stopCoordFn).filter(Boolean);
-          if (segCoords.length >= 2) {
-            for (const coord of segCoords) {
+      const nextStop = i + 1 < legs.length ? legs[i + 1].stop : (hasB ? stop2 : null);
+      let segAdded = false;
+      if (nextStop) {
+        const startCoord = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
+        const endCoord   = stopCoordFn(nextStop.stop_id) || (isValidLatLon(nextStop.lat, nextStop.lon) ? [nextStop.lon, nextStop.lat] : null);
+        const shapeId = (leg.tripId && _gtfsTripToShape) ? _gtfsTripToShape[leg.tripId] : null;
+        const shape   = (shapeId && _gtfsShapes) ? _gtfsShapes[shapeId] : null;
+        if (shape && shape.length >= 2 && startCoord && endCoord) {
+          const idxA = nearestShapeIdx(shape, startCoord[0], startCoord[1]);
+          const idxB = nearestShapeIdx(shape, endCoord[0], endCoord[1]);
+          if (idxA >= 0 && idxB > idxA) {
+            // Forward direction: slice from boarding stop to alighting stop
+            const seg = shape.slice(idxA, idxB + 1);
+            for (const pt of seg) {
               const last = stopLineCoords[stopLineCoords.length - 1];
-              if (!last || last[0] !== coord[0] || last[1] !== coord[1]) stopLineCoords.push(coord);
+              if (!last || last[0] !== pt[0] || last[1] !== pt[1]) stopLineCoords.push(pt);
             }
-            added = true;
+            segAdded = true;
           }
         }
       }
-      if (!added) {
+      if (!segAdded) {
+        // Fallback: add just this stop's coordinate (straight line to next will be implicit)
         const c = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
         if (c) {
           const last = stopLineCoords[stopLineCoords.length - 1];

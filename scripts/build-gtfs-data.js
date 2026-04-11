@@ -175,6 +175,60 @@ async function main() {
   fs.writeFileSync(tripsHeadsignFile, JSON.stringify(tripsHeadsignOut));
   console.log(`  → ${Object.keys(tripsHeadsignOut).length} headsigns skrevet til ${tripsHeadsignFile}`);
 
+  // ── 2b. shapes.txt → data/shapes.json + data/trip_to_shape.json ──────────
+  // shapes.json:     shape_id → [[lon, lat], ...]  (sorted by shape_pt_sequence)
+  // trip_to_shape.json: trip_id → shape_id
+  console.log('Behandler shapes.txt ...');
+  const shapesText = reader.readFile('shapes.txt');
+  if (shapesText) {
+    // Build trip_id → shape_id from trips.txt (already parsed above)
+    const tripToShape = {};
+    tripRows.forEach(t => { if (t.trip_id && t.shape_id) tripToShape[t.trip_id] = t.shape_id; });
+
+    // Parse shapes.txt into shape_id → [{seq, lon, lat}]
+    const shapeLines = shapesText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const shapeHeaders = parseCSVLine(shapeLines[0]).map(h => h.trim().replace(/^\uFEFF/, ''));
+    const colShapeId  = shapeHeaders.indexOf('shape_id');
+    const colSeqS     = shapeHeaders.indexOf('shape_pt_sequence');
+    const colLatS     = shapeHeaders.indexOf('shape_pt_lat');
+    const colLonS     = shapeHeaders.indexOf('shape_pt_lon');
+    if (colShapeId < 0 || colLatS < 0 || colLonS < 0) {
+      console.warn('  shapes.txt: ukendt kolonneformat – springes over');
+    } else {
+      const shapePts = {}; // shape_id → [[seq, lon, lat], ...]
+      for (let i = 1; i < shapeLines.length; i++) {
+        const line = shapeLines[i].trim();
+        if (!line) continue;
+        const vals = parseCSVLine(line);
+        const sid = vals[colShapeId];
+        const seq = colSeqS >= 0 ? parseInt(vals[colSeqS], 10) : i;
+        const lat = parseFloat(vals[colLatS]);
+        const lon = parseFloat(vals[colLonS]);
+        if (!sid || isNaN(lat) || isNaN(lon)) continue;
+        if (!shapePts[sid]) shapePts[sid] = [];
+        shapePts[sid].push([seq, lon, lat]);
+      }
+      // Sort each shape by sequence and output [[lon, lat], ...] with 5-decimal precision
+      const shapesOut = {};
+      for (const [sid, pts] of Object.entries(shapePts)) {
+        pts.sort((a, b) => a[0] - b[0]);
+        shapesOut[sid] = pts.map(p => [
+          Math.round(p[1] * 100000) / 100000,
+          Math.round(p[2] * 100000) / 100000
+        ]);
+      }
+      const shapesFile = path.join(outDir, 'shapes.json');
+      fs.writeFileSync(shapesFile, JSON.stringify(shapesOut));
+      console.log(`  → ${Object.keys(shapesOut).length} shapes skrevet til ${shapesFile}`);
+
+      const tripToShapeFile = path.join(outDir, 'trip_to_shape.json');
+      fs.writeFileSync(tripToShapeFile, JSON.stringify(tripToShape));
+      console.log(`  → ${Object.keys(tripToShape).length} trip→shape mappings skrevet til ${tripToShapeFile}`);
+    }
+  } else {
+    console.warn('  shapes.txt ikke fundet – shapes.json springes over');
+  }
+
   console.log('Behandler stop_times.txt ... (kan tage lidt tid)');
   const stopTimesText = reader.readFile('stop_times.txt');
   if (!stopTimesText) { console.warn('stop_times.txt ikke fundet – stop_routes.json springes over'); return; }
