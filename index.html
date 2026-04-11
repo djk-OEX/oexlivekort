@@ -1606,25 +1606,39 @@ svg.map-icon {
     ]);
 
     // Try each stop1 candidate in distance order; use the first that yields a direct route
-    // or a valid transfer leg.  Retain the fallback from the nearest candidate in case none match.
+    // or a valid single-hop transfer leg.  Retain the fallback from the nearest candidate
+    // in case none match.  2-hop (3-leg) results are saved separately as a last resort so
+    // a single-hop result at a further stop still wins over a 2-hop at the nearest stop.
     // skipSlots scales with walking distance: max(1, floor(dist/50)) — 1 slot per 50 m.
     let legs = null;
     let stop1 = stop1Candidates[0] || null;
+    let best2hopLegs = null;
+    let best2hopStop = null;
     for (const candidate of stop1Candidates){
       const skipSlots = Math.max(1, Math.floor((candidate.dist || 0) / 50));
       const candidateLegs = await findTransitLegs(candidate, hasB ? stop2 : null, skipSlots);
       const foundDirect = hasB && candidateLegs.length === 1;
-      const foundTransfer = hasB && candidateLegs.length >= 2 && candidateLegs.slice(1).some(l => l.isTransfer);
+      const foundTransfer = hasB && candidateLegs.length === 2 && !!candidateLegs[1].isTransfer;
       if (!hasB || foundDirect || foundTransfer){
         legs = candidateLegs;
         stop1 = candidate;
         break;
+      }
+      // Save first 2-hop result; only use if no direct/single-hop is found at any candidate
+      if (!best2hopLegs && hasB && candidateLegs.length >= 3 && candidateLegs.slice(1).some(l => l.isTransfer)){
+        best2hopLegs = candidateLegs;
+        best2hopStop = candidate;
       }
       // Keep the fallback result from the nearest candidate if nothing better turns up
       if (!legs){
         legs = candidateLegs;
         stop1 = candidate;
       }
+    }
+    // Promote 2-hop result when no direct or single-hop transfer was found
+    if (hasB && best2hopLegs && legs && !(legs.length === 1 || (legs.length === 2 && !!legs[1].isTransfer))){
+      legs = best2hopLegs;
+      stop1 = best2hopStop;
     }
     if (!legs) legs = [];
 
