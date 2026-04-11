@@ -1617,12 +1617,12 @@ svg.map-icon {
     const hasB = isValidLatLon(lat2, lng2);
     if (!hasA) return;
 
-    // Get up to 5 nearest stops for point A within 500 m, plus the nearest stop for B.
+    // Get up to 10 nearest stops for point A within 1000 m, plus the nearest stop for B.
     // Multiple candidates for A are tried in distance order; direct routes are preferred
-    // over transfers, so a stop slightly further away that offers a direct route wins over
-    // the nearest stop that only has a transfer connection.
+    // over transfers — a direct route at up to 1 km from A always wins over any transfer,
+    // regardless of which stop is closest.
     const [stop1Candidates, stop2] = await Promise.all([
-      hasA ? findNearestGtfsStops(lat1, lng1, 5, 500) : Promise.resolve([]),
+      hasA ? findNearestGtfsStops(lat1, lng1, 10, 1000) : Promise.resolve([]),
       hasB ? findNearestGtfsStop(lat2, lng2) : Promise.resolve(null)
     ]);
 
