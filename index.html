@@ -705,12 +705,12 @@ svg.map-icon {
           h += '<div class="oex-bp-dep">';
           if (d.name) h += '<span class="oex-bp-line">'+escapeHtml(d.name)+'</span>';
           if (d.dir)  h += '<span class="oex-bp-time" style="font-size:11px;color:#e0e0e0;">→ '+escapeHtml(d.dir)+'</span>';
-          h += '<span class="oex-bp-time">'+escapeHtml(d.time)+'</span>';
+          h += '<span class="oex-bp-time">'+escapeHtml(_displayTime(d.time))+'</span>';
           h += '</div>';
         });
       } else if (nextDep){
         h += '<div class="oex-bp-none">Ingen afgange nu</div>';
-        h += '<div class="oex-bp-dep"><span class="oex-bp-line">'+escapeHtml(nextDep.routeShortName||'?')+'</span><span class="oex-bp-time">'+escapeHtml(nextDep.nextTime)+'</span></div>';
+        h += '<div class="oex-bp-dep"><span class="oex-bp-line">'+escapeHtml(nextDep.routeShortName||'?')+'</span><span class="oex-bp-time">'+escapeHtml(_displayTime(nextDep.nextTime))+'</span></div>';
       } else {
         h += '<div class="oex-bp-none">Ingen afgange fundet</div>';
       }
@@ -865,6 +865,16 @@ svg.map-icon {
       return _gtfsShapes;
     }).catch(e => { console.warn('loadGtfsShapes fejl:', e); _gtfsShapes = {}; _gtfsTripToShape = {}; _gtfsShapesLoading = null; return _gtfsShapes; });
     return _gtfsShapesLoading;
+  }
+
+  // Converts a GTFS extended time string (where hours >= 24 indicate after-midnight
+  // service on the same service day) to a normal HH:MM[:SS] display string.
+  // E.g. "25:04" → "01:04", "25:04:30" → "01:04:30", "17:29" → "17:29" (unchanged).
+  function _displayTime(hhmm){
+    if (!hhmm || hhmm.length < 5 || hhmm[2] !== ':') return hhmm || '';
+    const h = parseInt(hhmm.substring(0, 2), 10);
+    if (isNaN(h) || h < 24) return hhmm;
+    return String(h % 24).padStart(2, '0') + hhmm.substring(2);
   }
 
   function _getDepartureSlotKey(){
@@ -1077,7 +1087,7 @@ svg.map-icon {
             filtered.slice(0, 5).forEach(d => {
               hUp += '<div class="oex-bp-dep">';
               if (d.name) hUp += '<span class="oex-bp-line">'+escapeHtml(d.name)+'</span>';
-              hUp += '<span class="oex-bp-time">'+escapeHtml(d.time)+'</span>';
+              hUp += '<span class="oex-bp-time">'+escapeHtml(_displayTime(d.time))+'</span>';
               hUp += '</div>';
             });
           } else {
@@ -1292,7 +1302,7 @@ svg.map-icon {
           const tH0 = parseInt(minTime.substring(0, 2), 10);
           const tM0 = parseInt(minTime.substring(3, 5), 10);
           const plusMins = tH0 * 60 + tM0 + 10;
-          const pH = Math.floor(plusMins / 60) % 24;
+          const pH = Math.floor(plusMins / 60);
           const pM = plusMins % 60;
           transferMinTime = String(pH).padStart(2, '0') + ':' + String(pM).padStart(2, '0');
         }
@@ -1606,7 +1616,7 @@ svg.map-icon {
       html += '<div class="oex-tp-dep">';
       if (d.name) html += '<span class="oex-tp-dep-line">'+escapeHtml(d.name)+'</span>';
       if (d.dir)  html += '<span class="oex-tp-dep-dir">→ '+escapeHtml(d.dir)+'</span>';
-      html += '<span class="oex-tp-dep-time">'+escapeHtml(d.time)+'</span>';
+      html += '<span class="oex-tp-dep-time">'+escapeHtml(_displayTime(d.time))+'</span>';
       html += '</div>';
     });
     html += '</div>';
@@ -1652,7 +1662,7 @@ svg.map-icon {
       const nextTime = (leg.nextDep && leg.nextDep.nextTime) ||
                        (leg.deps && leg.deps.length && leg.deps[0].time) || null;
       if (nextTime){
-        html += '<div class="oex-tp-row" style="margin-top:5px;">🚌 Næste afgang: '+escapeHtml(nextTime)+'</div>';
+        html += '<div class="oex-tp-row" style="margin-top:5px;">🚌 Næste afgang: '+escapeHtml(_displayTime(nextTime))+'</div>';
       }
       html += '</div>';
     });
