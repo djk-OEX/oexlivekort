@@ -871,7 +871,7 @@ svg.map-icon {
   // service on the same service day) to a normal HH:MM[:SS] display string.
   // E.g. "25:04" → "01:04", "25:04:30" → "01:04:30", "17:29" → "17:29" (unchanged).
   function _displayTime(hhmm){
-    if (!hhmm || hhmm.length < 5) return hhmm || '';
+    if (!hhmm || hhmm.length < 5 || hhmm[2] !== ':') return hhmm || '';
     const h = parseInt(hhmm.substring(0, 2), 10);
     if (isNaN(h) || h < 24) return hhmm;
     return String(h % 24).padStart(2, '0') + hhmm.substring(2);
