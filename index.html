@@ -1265,10 +1265,15 @@ svg.map-icon {
         return null;
       };
 
+      // Helper: converts "HH:MM" (including GTFS extended hours) to total minutes for comparison.
+      const _hhmmToMinutes = (hhmm) => parseInt(hhmm.substring(0,2),10)*60 + parseInt(hhmm.substring(3,5),10);
+
       // Helper: find the connecting departure at stopId for transferRouteId after a previous
       // leg arrives at stopId via prevTripId at prevHHMM. Scans departure files to get the
       // real arrival time of prevTripId at stopId, then finds the first departure of
       // transferRouteId at that stop at or after that time.
+      // maxSlots limits the forward search (each slot = 5 min); use 48 for a 4-hour window to
+      // avoid selecting night-only routes, 96 (default) for the full 8-hour fallback window.
       // Returns { entry, depTime, minTime } where minTime = actual arrival time used.
       const findConnectingDep = async (stopId, transferRouteId, prevTripId, prevHHMM, maxSlots = 96) => {
         const allSlotKeys = _getDaySlotKeys();
@@ -1474,9 +1479,7 @@ svg.map-icon {
           }
           // Early exit: if we already have a great connection (within 1 hour), no need to keep scanning
           if (bestConn && bestConn.minTime && bestConn.depTime) {
-            const minM = parseInt(bestConn.minTime.substring(0,2),10)*60 + parseInt(bestConn.minTime.substring(3,5),10);
-            const depM = parseInt(bestConn.depTime.substring(0,2),10)*60 + parseInt(bestConn.depTime.substring(3,5),10);
-            if (depM - minM <= 60) break;
+            if (_hhmmToMinutes(bestConn.depTime) - _hhmmToMinutes(bestConn.minTime) <= 60) break;
           }
         }
         if (bestConn){
