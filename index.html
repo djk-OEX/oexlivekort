@@ -1268,7 +1268,7 @@ svg.map-icon {
           const tH0 = parseInt(minTime.substring(0, 2));
           const tM0 = parseInt(minTime.substring(3, 5));
           const plusMins = tH0 * 60 + tM0 + 10;
-          const pH = Math.floor(plusMins / 60);
+          const pH = Math.floor(plusMins / 60) % 24;
           const pM = plusMins % 60;
           transferMinTime = String(pH).padStart(2, '0') + ':' + String(pM).padStart(2, '0');
         }
