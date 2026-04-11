@@ -35,10 +35,11 @@ Trin:
        data/stop_routes.json         – ruter per stop: {"stop_id": [{line, headsigns}], ...}
        data/routes.json              – route_id → short_name opslag: {"102785-12345": "2A", ...}
        data/route_stops.json         – stop-id-liste per rute: {"102785-12345": ["stop1","stop2",...], ...}
+       data/route_to_shape.json      – rute_id → shape_id: {"102785-12345": "102785-67", ...}
        data/departures_5min/*.json   – 5-min afgangsvinduer med linjekort (short_name)
 
   4. Commit og push de nye datafiler til repo:
-       git add data/stops.json data/stop_routes.json data/routes.json data/route_stops.json data/departures_5min/
+       git add data/stops.json data/stop_routes.json data/routes.json data/route_stops.json data/route_to_shape.json data/departures_5min/
        git commit -m "Opdater GTFS-data"
        git push
 

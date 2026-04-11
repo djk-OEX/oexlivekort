@@ -224,6 +224,17 @@ async function main() {
       const tripToShapeFile = path.join(outDir, 'trip_to_shape.json');
       fs.writeFileSync(tripToShapeFile, JSON.stringify(tripToShape));
       console.log(`  → ${Object.keys(tripToShape).length} trip→shape mappings skrevet til ${tripToShapeFile}`);
+
+      // Build route_id → shape_id using trips.txt (pick first shape per route)
+      const routeToShape = {};
+      tripRows.forEach(t => {
+        if (t.route_id && t.shape_id && !(t.route_id in routeToShape)) {
+          routeToShape[t.route_id] = t.shape_id;
+        }
+      });
+      const routeToShapeFile = path.join(outDir, 'route_to_shape.json');
+      fs.writeFileSync(routeToShapeFile, JSON.stringify(routeToShape));
+      console.log(`  → ${Object.keys(routeToShape).length} route→shape mappings skrevet til ${routeToShapeFile}`);
     }
   } else {
     console.warn('  shapes.txt ikke fundet – shapes.json springes over');
