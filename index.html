@@ -1216,6 +1216,88 @@ svg.map-icon {
         return null;
       };
 
+      // Helper: find the connecting departure at stopId for transferRouteId after a previous
+      // leg arrives at stopId via prevTripId at prevHHMM. Scans departure files to get the
+      // real arrival time of prevTripId at stopId, then finds the first departure of
+      // transferRouteId at that stop at or after that time.
+      // Returns { entry, depTime, minTime } where minTime = actual arrival time used.
+      const findConnectingDep = async (stopId, transferRouteId, prevTripId, prevHHMM) => {
+        const allSlotKeys = _getDaySlotKeys();
+        let arrivalHHMM = '';
+        if (prevTripId && prevHHMM && prevHHMM.length >= 5) {
+          const scanSlotKey = prevHHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(prevHHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
+          const scanSlotIdx = allSlotKeys.indexOf(scanSlotKey);
+          const scanFrom = scanSlotIdx >= 0 ? scanSlotIdx : 0;
+          const scanOrdered = [...allSlotKeys.slice(scanFrom), ...allSlotKeys.slice(0, scanFrom)];
+          for (let si = 0; si < Math.min(24, scanOrdered.length) && !arrivalHHMM; si++) {
+            try {
+              const ra = await fetch('data/departures_5min/' + scanOrdered[si] + '.json.gz');
+              if (!ra.ok) continue;
+              const da = await ra.json();
+              const ents = da[String(stopId)];
+              if (ents && ents.length) {
+                for (const ent of ents) {
+                  if (ent.route_id === prevTripId) {
+                    arrivalHHMM = (ent.departure || ent.arrival || '').substring(0, 5);
+                    break;
+                  }
+                }
+              }
+            } catch(_) {}
+          }
+        }
+        const minTime = arrivalHHMM || (prevHHMM || '');
+        let slotStart = 0;
+        if (minTime.length >= 5) {
+          const tH = parseInt(minTime.substring(0, 2));
+          const tM = parseInt(minTime.substring(3, 5));
+          const nextSlotMins = Math.ceil((tH * 60 + tM) / 5) * 5;
+          const nextH = Math.floor(nextSlotMins / 60);
+          const nextM = nextSlotMins % 60;
+          const nextSlotKey = String(nextH).padStart(2, '0') + '_' + String(nextM).padStart(2, '0');
+          const ki = allSlotKeys.indexOf(nextSlotKey);
+          if (ki >= 0) slotStart = Math.min(ki + skipSlots, allSlotKeys.length - 1);
+        }
+        const orderedSlots = [...allSlotKeys.slice(slotStart), ...allSlotKeys.slice(0, slotStart)];
+        let entry = null;
+        for (let ki2 = 0; ki2 < Math.min(96, orderedSlots.length) && !entry; ki2++) {
+          try {
+            const r2 = await fetch('data/departures_5min/' + orderedSlots[ki2] + '.json.gz');
+            if (!r2.ok) continue;
+            const dat2 = await r2.json();
+            const ents2 = dat2[String(stopId)];
+            if (ents2 && ents2.length) {
+              for (const ent2 of ents2) {
+                const resolvedRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
+                if (resolvedRouteId === transferRouteId) {
+                  const dep2HHMM = (ent2.departure || ent2.arrival || '').substring(0, 5);
+                  if (minTime.length >= 5 && dep2HHMM.length >= 5 && dep2HHMM < minTime) continue;
+                  entry = ent2; break;
+                }
+              }
+            }
+          } catch(_) {}
+        }
+        const depTime = entry ? (entry.departure || entry.arrival || '').substring(0, 5) : '';
+        return { entry, depTime, minTime };
+      };
+
+      // Helper: build a transfer leg object from a connecting dep result.
+      const makeLeg2Transfer = (transferStop, transferRouteId, conn) => ({
+        stop: transferStop,
+        routeShortName: conn.entry
+          ? (conn.entry.short_name || routeLookup[conn.entry.route_id] || routeLookup[transferRouteId] || transferRouteId || '')
+          : (routeLookup[transferRouteId] || transferRouteId || ''),
+        routeLongName:  depLongName(transferRouteId),
+        routeHeadsign:  depHeadsign(conn.entry),
+        tripId: conn.entry ? conn.entry.route_id : transferRouteId,
+        internalRouteId: transferRouteId,
+        isTransfer: true,
+        scheduledDepTime: conn.depTime,
+        minDepartureTime: conn.minTime,
+        fromStop: transferStop.name
+      });
+
       // Build leg1 helper
       const makeLeg1 = (e1) => {
         const tripId1 = e1 ? e1.route_id : null;
@@ -1306,93 +1388,10 @@ svg.map-icon {
             dist: 0
           };
 
-          // Find when leg1's trip arrives at the transfer stop, then compute slotStart for leg2.
-          // We scan departure files for the transfer stop looking for the same trip_id as e1,
-          // which gives us the actual arrival time of leg1 at the shift point.
           const leg1TripId = e1 ? e1.route_id : null;
           const leg1HHMM = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
-          const allSlotKeys = _getDaySlotKeys();
-          let arrivalAtTransferHHMM = '';
-          if (leg1TripId && leg1HHMM.length >= 5) {
-            const leg1SlotKey = leg1HHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(leg1HHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
-            const leg1SlotIdx = allSlotKeys.indexOf(leg1SlotKey);
-            const scanFrom = leg1SlotIdx >= 0 ? leg1SlotIdx : 0;
-            const scanOrdered = [...allSlotKeys.slice(scanFrom), ...allSlotKeys.slice(0, scanFrom)];
-            for (let si = 0; si < Math.min(24, scanOrdered.length) && !arrivalAtTransferHHMM; si++) {
-              try {
-                const ra = await fetch('data/departures_5min/' + scanOrdered[si] + '.json.gz');
-                if (!ra.ok) continue;
-                const da = await ra.json();
-                const ents = da[String(sid)];
-                if (ents && ents.length) {
-                  for (const ent of ents) {
-                    if (ent.route_id === leg1TripId) {
-                      arrivalAtTransferHHMM = (ent.departure || ent.arrival || '').substring(0, 5);
-                      break;
-                    }
-                  }
-                }
-              } catch(_ra) {}
-            }
-          }
-          // slotStart = round UP arrival time to next 5-min slot + skipSlots buffer.
-          // e.g. arrival 21:27 → ceil to 21:30 → slot 21_30 → +1 skipSlot → 21_35.
-          // Falls back to leg1's departure slot if arrival at transfer was not found.
-          const timeForLeg2 = arrivalAtTransferHHMM || leg1HHMM;
-          let slotStart = 0;
-          if (timeForLeg2.length >= 5) {
-            const tH = parseInt(timeForLeg2.substring(0, 2));
-            const tM = parseInt(timeForLeg2.substring(3, 5));
-            const nextSlotMins = Math.ceil((tH * 60 + tM) / 5) * 5;
-            const nextH = Math.floor(nextSlotMins / 60);
-            const nextM = nextSlotMins % 60;
-            const nextSlotKey = String(nextH).padStart(2, '0') + '_' + String(nextM).padStart(2, '0');
-            const ki = allSlotKeys.indexOf(nextSlotKey);
-            if (ki >= 0) slotStart = Math.min(ki + skipSlots, allSlotKeys.length - 1);
-          }
-          const orderedSlots = [...allSlotKeys.slice(slotStart), ...allSlotKeys.slice(0, slotStart)];
-          let e2 = null;
-          // Search up to 96 slots = 8 hours of 5-min windows
-          for (let ki2 = 0; ki2 < Math.min(96, orderedSlots.length) && !e2; ki2++) {
-            try {
-              const r2 = await fetch('data/departures_5min/' + orderedSlots[ki2] + '.json.gz');
-              if (!r2.ok) continue;
-              const dat2 = await r2.json();
-              const ents2 = dat2[String(sid)];
-              if (ents2 && ents2.length) {
-                for (const ent2 of ents2) {
-                  const resolvedRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
-                  if (resolvedRouteId === transferRouteId) {
-                    // Only accept if departure is at or after leg1's expected arrival at transfer
-                    const dep2HHMM = (ent2.departure || ent2.arrival || '').substring(0, 5);
-                    if (timeForLeg2.length >= 5 && dep2HHMM.length >= 5 && dep2HHMM < timeForLeg2) continue;
-                    e2 = ent2; break;
-                  }
-                }
-              }
-            } catch(_r2) { /* network/parse error – try next slot */ }
-          }
-          // Use the real trip_id from the departure entry so both shortName lookup
-          // and _findAndShowRouteStops (route dots) resolve correctly via _gtfsTripToRoute.
-          const tripId2 = e2 ? e2.route_id : transferRouteId;
-          const shortName2 = e2
-            ? (e2.short_name || routeLookup[e2.route_id] || routeLookup[transferRouteId] || transferRouteId || '')
-            : (routeLookup[transferRouteId] || transferRouteId || '');
-          const leg2DepTime = e2 ? (e2.departure || e2.arrival || '').substring(0, 5) : '';
-
-          const leg2 = {
-            stop: transferStop,
-            routeShortName: shortName2,
-            routeLongName:  depLongName(transferRouteId),
-            routeHeadsign:  depHeadsign(e2),
-            tripId: tripId2,
-            internalRouteId: transferRouteId,
-            isTransfer: true,
-            scheduledDepTime: leg2DepTime,
-            minDepartureTime: timeForLeg2,
-            fromStop: transferStop.name
-          };
-          return [leg1, leg2];
+          const conn = await findConnectingDep(sid, transferRouteId, leg1TripId, leg1HHMM);
+          return [leg1, makeLeg2Transfer(transferStop, transferRouteId, conn)];
         }
       }
 
@@ -1433,83 +1432,65 @@ svg.map-icon {
               dist: 0
             };
 
-            // Reuse the same arrival-time + leg2-dep logic as the primary search
-            const leg1TripIdLN = e1 ? e1.route_id : null;
-            const leg1HHMMLn  = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
-            const allSlotKeysLN = _getDaySlotKeys();
-            let arrivalAtTransferLN = '';
-            if (leg1TripIdLN && leg1HHMMLn.length >= 5) {
-              const lnSlotKey = leg1HHMMLn.substring(0, 2) + '_' + String(Math.floor(parseInt(leg1HHMMLn.substring(3, 5)) / 5) * 5).padStart(2, '0');
-              const lnSlotIdx = allSlotKeysLN.indexOf(lnSlotKey);
-              const lnScanFrom = lnSlotIdx >= 0 ? lnSlotIdx : 0;
-              const lnScanOrdered = [...allSlotKeysLN.slice(lnScanFrom), ...allSlotKeysLN.slice(0, lnScanFrom)];
-              for (let si = 0; si < Math.min(24, lnScanOrdered.length) && !arrivalAtTransferLN; si++) {
-                try {
-                  const ra = await fetch('data/departures_5min/' + lnScanOrdered[si] + '.json.gz');
-                  if (!ra.ok) continue;
-                  const da = await ra.json();
-                  const ents = da[sid];
-                  if (ents && ents.length) {
-                    for (const ent of ents) {
-                      if (ent.route_id === leg1TripIdLN) {
-                        arrivalAtTransferLN = (ent.departure || ent.arrival || '').substring(0, 5);
-                        break;
-                      }
-                    }
-                  }
-                } catch(_) {}
-              }
-            }
-            const timeForLeg2LN = arrivalAtTransferLN || leg1HHMMLn;
-            let slotStartLN = 0;
-            if (timeForLeg2LN.length >= 5) {
-              const tH = parseInt(timeForLeg2LN.substring(0, 2));
-              const tM = parseInt(timeForLeg2LN.substring(3, 5));
-              const nextSlotMins = Math.ceil((tH * 60 + tM) / 5) * 5;
-              const nextH = Math.floor(nextSlotMins / 60);
-              const nextM = nextSlotMins % 60;
-              const nextSlotKey = String(nextH).padStart(2, '0') + '_' + String(nextM).padStart(2, '0');
-              const ki = allSlotKeysLN.indexOf(nextSlotKey);
-              if (ki >= 0) slotStartLN = Math.min(ki + skipSlots, allSlotKeysLN.length - 1);
-            }
-            const orderedSlotsLN = [...allSlotKeysLN.slice(slotStartLN), ...allSlotKeysLN.slice(0, slotStartLN)];
-            let e2LN = null;
-            for (let ki2 = 0; ki2 < Math.min(96, orderedSlotsLN.length) && !e2LN; ki2++) {
-              try {
-                const r2 = await fetch('data/departures_5min/' + orderedSlotsLN[ki2] + '.json.gz');
-                if (!r2.ok) continue;
-                const dat2 = await r2.json();
-                const ents2 = dat2[sid];
-                if (ents2 && ents2.length) {
-                  for (const ent2 of ents2) {
-                    const resolvedRouteId = (_gtfsTripToRoute && _gtfsTripToRoute[ent2.route_id]) || ent2.route_id;
-                    if (resolvedRouteId === transferRouteId) {
-                      const dep2HHMM = (ent2.departure || ent2.arrival || '').substring(0, 5);
-                      if (timeForLeg2LN.length >= 5 && dep2HHMM.length >= 5 && dep2HHMM < timeForLeg2LN) continue;
-                      e2LN = ent2; break;
-                    }
-                  }
-                }
-              } catch(_) {}
-            }
-            const tripId2LN = e2LN ? e2LN.route_id : transferRouteId;
-            const shortName2LN = e2LN
-              ? (e2LN.short_name || routeLookup[e2LN.route_id] || routeLookup[transferRouteId] || transferRouteId || '')
-              : (routeLookup[transferRouteId] || transferRouteId || '');
-            const leg2DepTimeLN = e2LN ? (e2LN.departure || e2LN.arrival || '').substring(0, 5) : '';
+            const connLN = await findConnectingDep(sid, transferRouteId, e1 ? e1.route_id : null, e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '');
+            return [leg1, makeLeg2Transfer(transferStop, transferRouteId, connLN)];
+          }
+        }
+      }
 
-            return [leg1, {
-              stop: transferStop,
-              routeShortName: shortName2LN,
-              routeLongName:  depLongName(transferRouteId),
-              routeHeadsign:  depHeadsign(e2LN),
-              tripId: tripId2LN,
-              internalRouteId: transferRouteId,
-              isTransfer: true,
-              scheduledDepTime: leg2DepTimeLN,
-              minDepartureTime: timeForLeg2LN,
-              fromStop: transferStop.name
-            }];
+      // ── 2-hop transfer: route1 → transfer1 → route2 → transfer2 → route3 → stop2 ──
+      // Used when no single-hop path exists (e.g. local bus → intercity → local bus in another city).
+      if (internalRoute1 && stopsOnRoute1.length) {
+        await loadGtfsStops();
+        _ensureGtfsStopMap();
+        const routesAtStop2for2hop = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
+        const leg1TripId2h = e1 ? e1.route_id : null;
+        const leg1HHMM2h   = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
+        const MAX_STOPS_2HOP = 60;
+        let found2hop = null;
+        outer2hop:
+        for (const s1Id of stopsOnRoute1.slice(0, MAX_STOPS_2HOP)) {
+          const sid1 = String(s1Id);
+          if (sid1 === String(stop1.stop_id) || sid1 === stop2Id) continue;
+          const routesAtS1 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid1) || new Set()) : new Set();
+          for (const r2 of routesAtS1) {
+            if (r2 === internalRoute1) continue;
+            const stopsOnR2 = routeStopsData[r2] || [];
+            for (const s2Id of stopsOnR2.slice(0, MAX_STOPS_2HOP)) {
+              const sid2 = String(s2Id);
+              if (sid2 === sid1 || sid2 === String(stop1.stop_id)) continue;
+              const routesAtS2 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(sid2) || new Set()) : new Set();
+              let r3 = null;
+              for (const r of routesAtS2) {
+                if (routesAtStop2for2hop.has(r)) { r3 = r; break; }
+              }
+              if (!r3) continue;
+              found2hop = { sid1, r2, sid2, r3 };
+              break outer2hop;
+            }
+          }
+        }
+        if (found2hop) {
+          const { sid1, r2, sid2, r3 } = found2hop;
+          const stopInfo1 = _gtfsStopMap.get(sid1);
+          const stopInfo2 = _gtfsStopMap.get(sid2);
+          if (stopInfo1 && stopInfo2) {
+            const transferStop1 = {
+              stop_id: sid1, name: stopInfo1.name || sid1,
+              lat: stopInfo1.lat,
+              lon: stopInfo1.lon !== undefined ? stopInfo1.lon : stopInfo1.lng,
+              dist: 0
+            };
+            const transferStop2 = {
+              stop_id: sid2, name: stopInfo2.name || sid2,
+              lat: stopInfo2.lat,
+              lon: stopInfo2.lon !== undefined ? stopInfo2.lon : stopInfo2.lng,
+              dist: 0
+            };
+            const conn2 = await findConnectingDep(sid1, r2, leg1TripId2h, leg1HHMM2h);
+            const leg2DepOrMinTime = conn2.depTime || conn2.minTime;
+            const conn3 = await findConnectingDep(sid2, r3, conn2.entry ? conn2.entry.route_id : null, leg2DepOrMinTime);
+            return [leg1, makeLeg2Transfer(transferStop1, r2, conn2), makeLeg2Transfer(transferStop2, r3, conn3)];
           }
         }
       }
@@ -1569,11 +1550,14 @@ svg.map-icon {
     panel.id = 'oex-transit-panel';
     let html = '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
 
+    const multiTransfer = legs.filter(l => l.isTransfer).length >= 2;
+    let transferCount = 0;
     legs.forEach((leg, i) => {
       const stop = leg.stop;
       if (!stop) return;
       const isFirst = i === 0;
       const isTransfer = !!leg.isTransfer;
+      if (isTransfer) transferCount++;
       const lineBadge = leg.routeShortName ? '<span class="oex-tp-dep-line" style="font-size:15px;padding:2px 8px;">'+escapeHtml(leg.routeShortName)+'</span>' : '';
       // For transfer/connecting legs show "Origin → Headsign" when the departure stop (fromStop) is known.
       // For other legs show only "→ Headsign".
@@ -1583,7 +1567,7 @@ svg.map-icon {
           (leg.fromStop ? escapeHtml(leg.fromStop) + ' → ' : '→ ') +
           escapeHtml(headsignText) + '</span>'
         : '';
-      const stopLabel = isFirst ? 'Fra A' : (isTransfer ? 'Skift' : 'Til B');
+      const stopLabel = isFirst ? 'Fra A' : (isTransfer ? (multiTransfer ? 'Skift ' + transferCount : 'Skift') : 'Til B');
       const distText = stop.dist ? ' <span style="color:#bbbbbb;font-size:11px;">('+stop.dist+' m til fods)</span>' : '';
 
       html += '<div class="oex-tp-leg" style="margin-top:'+(isFirst?'4':'10')+'px;padding-top:'+(isFirst?'0':'8')+'px;'+(isFirst?'':'border-top:1px solid #333;')+'">';
@@ -1630,7 +1614,7 @@ svg.map-icon {
       const skipSlots = Math.max(1, Math.floor((candidate.dist || 0) / 50));
       const candidateLegs = await findTransitLegs(candidate, hasB ? stop2 : null, skipSlots);
       const foundDirect = hasB && candidateLegs.length === 1;
-      const foundTransfer = hasB && candidateLegs.length === 2 && !!candidateLegs[1].isTransfer;
+      const foundTransfer = hasB && candidateLegs.length >= 2 && candidateLegs.slice(1).some(l => l.isTransfer);
       if (!hasB || foundDirect || foundTransfer){
         legs = candidateLegs;
         stop1 = candidate;
@@ -1690,16 +1674,18 @@ svg.map-icon {
       const l1 = legs[0] || {};
       _attachBusStopPopup(m, stop1, l1.deps || [], l1.nextDep || null);
     }
-    // Add 🚌 T marker for transfer stop (leg 2 when isTransfer)
-    if (legs.length >= 2 && legs[1].isTransfer && legs[1].stop && isValidLatLon(legs[1].stop.lat, legs[1].stop.lon)){
-      const ts = legs[1].stop;
-      const mt = new atlas.HtmlMarker({
-        position: [ts.lon, ts.lat],
-        htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 ⇄</div>'
-      });
-      map.markers.add(mt); busMarkers.push(mt);
-      _attachBusStopPopup(mt, ts, legs[1].deps || [], legs[1].nextDep || null);
-    }
+    // Add 🚌 ⇄ marker for every transfer leg (supports 1 or 2 transfers)
+    legs.forEach((leg, i) => {
+      if (i > 0 && leg.isTransfer && leg.stop && isValidLatLon(leg.stop.lat, leg.stop.lon)){
+        const ts = leg.stop;
+        const mt = new atlas.HtmlMarker({
+          position: [ts.lon, ts.lat],
+          htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 ⇄</div>'
+        });
+        map.markers.add(mt); busMarkers.push(mt);
+        _attachBusStopPopup(mt, ts, leg.deps || [], leg.nextDep || null);
+      }
+    });
     // Add 🚌 B marker for nearest stop to B
     if (stop2){
       const m = new atlas.HtmlMarker({
@@ -1707,10 +1693,11 @@ svg.map-icon {
         htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 B</div>'
       });
       map.markers.add(m); busMarkers.push(m);
-      // For marker popup: use leg2 deps if transfer, else fetch stop2 deps
-      const l2 = (legs.length >= 2 && !legs[1].isTransfer) ? legs[1] : null;
-      if (l2 && l2.deps){
-        _attachBusStopPopup(m, stop2, l2.deps, l2.nextDep || null);
+      // For marker popup: use last leg's deps if it is not a transfer (independent fallback leg), else fetch stop2 deps
+      const lastLeg = legs.length >= 2 ? legs[legs.length - 1] : null;
+      const lFinal = (lastLeg && !lastLeg.isTransfer) ? lastLeg : null;
+      if (lFinal && lFinal.deps){
+        _attachBusStopPopup(m, stop2, lFinal.deps, lFinal.nextDep || null);
       } else {
         const d2 = await fetchGtfsDepartures(stop2.stop_id);
         const nd2 = (!d2 || !d2.length) ? await fetchNextGtfsDeparture(stop2.stop_id) : null;
@@ -1780,14 +1767,19 @@ svg.map-icon {
             const shownPos = [];
             const shownIds = new Set([String(leg.stop.stop_id)]);
             // Determine end stop for segment filtering:
-            // Leg 0 (A): show only up to the transfer stop or B stop.
-            // Leg 1 transfer: show only from transfer stop to B stop.
-            // Leg 1 non-transfer: no segment filter (independent fallback leg).
+            // Leg 0 (A): show only up to the next leg's stop (transfer or B).
+            // Transfer legs: show from transfer stop to the next leg's stop (or B if last transfer).
+            // Non-transfer last leg: no segment filter (independent fallback leg).
             let segEndStopId = null;
             if (i === 0 && legs.length >= 2 && legs[1].stop) {
               segEndStopId = String(legs[1].stop.stop_id);
-            } else if (i === 1 && leg.isTransfer && stop2) {
-              segEndStopId = String(stop2.stop_id);
+            } else if (leg.isTransfer) {
+              const nextLeg = legs[i + 1];
+              if (nextLeg && nextLeg.stop) {
+                segEndStopId = String(nextLeg.stop.stop_id);
+              } else if (stop2) {
+                segEndStopId = String(stop2.stop_id);
+              }
             }
             await _findAndShowRouteStops(leg.stop, shownIds, shownPos, leg.tripId, segEndStopId);
           } catch(err) { console.warn('Route dots fejl:', err); }
