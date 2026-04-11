@@ -783,6 +783,10 @@ svg.map-icon {
   let _depsCacheData = null;        // currently cached departure file data
   let _gtfsStopMap = null;          // stop_id → stop object (built lazily)
   let _gtfsStopToRoutes = null;     // stop_id → Set<internal_route_id> (built lazily)
+  let _gtfsShapes = null;           // shape_id → [[lon, lat], ...] (from shapes.json)
+  let _gtfsShapesLoading = null;
+  let _gtfsTripToShape = null;      // trip_id → shape_id (from trip_to_shape.json)
+  let _gtfsTripToShapeLoading = null;
 
   async function loadGtfsStops(){
     if (_gtfsStops) return _gtfsStops;
@@ -846,6 +850,21 @@ svg.map-icon {
       .then(data => { _gtfsRouteStops = (data && typeof data === 'object') ? data : {}; _gtfsRouteStopsLoading = null; return _gtfsRouteStops; })
       .catch(e => { console.warn('loadGtfsRouteStops fejl:', e); _gtfsRouteStops = {}; _gtfsRouteStopsLoading = null; return _gtfsRouteStops; });
     return _gtfsRouteStopsLoading;
+  }
+
+  async function loadGtfsShapes(){
+    if (_gtfsShapes) return _gtfsShapes;
+    if (_gtfsShapesLoading) return _gtfsShapesLoading;
+    _gtfsShapesLoading = Promise.all([
+      fetch('data/shapes.json').then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('data/trip_to_shape.json').then(r => r.ok ? r.json() : {}).catch(() => ({}))
+    ]).then(([shapes, tripToShape]) => {
+      _gtfsShapes = (shapes && typeof shapes === 'object') ? shapes : {};
+      _gtfsTripToShape = (tripToShape && typeof tripToShape === 'object') ? tripToShape : {};
+      _gtfsShapesLoading = null;
+      return _gtfsShapes;
+    }).catch(e => { console.warn('loadGtfsShapes fejl:', e); _gtfsShapes = {}; _gtfsTripToShape = {}; _gtfsShapesLoading = null; return _gtfsShapes; });
+    return _gtfsShapesLoading;
   }
 
   function _getDepartureSlotKey(){
@@ -1776,11 +1795,13 @@ svg.map-icon {
       }
     }
 
-    // Draw dashed line connecting key stops only: A → transfer stop(s) → B as straight segments.
-    // Using only the actual leg boarding stops avoids traversing every intermediate stop on
-    // the route (which caused noisy zig-zag lines because route_stops order is unspecified).
+    // Draw route line using GTFS shapes for exact geometry (forward direction only).
+    // For each leg, look up the trip's shape, find nearest shape points to boarding
+    // and alighting stops, then slice forward (ascending sequence). Falls back to a
+    // straight line between key stops if shapes data is unavailable.
     await loadGtfsStops();
     _ensureGtfsStopMap();
+    await loadGtfsShapes();
     const stopCoordFn = (sid) => {
       const s = _gtfsStopMap.get(String(sid));
       if (!s) return null;
@@ -1788,14 +1809,48 @@ svg.map-icon {
       const lon = s.lon !== undefined ? s.lon : s.lng;
       return isValidLatLon(lat, lon) ? [lon, lat] : null;
     };
+    // Return the index of the shape point nearest to [lon, lat] (squared euclidean in deg)
+    const nearestShapeIdx = (shape, lon, lat) => {
+      let best = -1, bestDist = Infinity;
+      for (let i = 0; i < shape.length; i++) {
+        const dx = shape[i][0] - lon, dy = shape[i][1] - lat;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      return best;
+    };
     const stopLineCoords = [];
     for (let i = 0; i < legs.length; i++) {
       const leg = legs[i];
       if (!leg.stop) continue;
-      const c = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
-      if (c) {
-        const last = stopLineCoords[stopLineCoords.length - 1];
-        if (!last || last[0] !== c[0] || last[1] !== c[1]) stopLineCoords.push(c);
+      const nextStop = i + 1 < legs.length ? legs[i + 1].stop : (hasB ? stop2 : null);
+      let segAdded = false;
+      if (nextStop) {
+        const startCoord = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
+        const endCoord   = stopCoordFn(nextStop.stop_id) || (isValidLatLon(nextStop.lat, nextStop.lon) ? [nextStop.lon, nextStop.lat] : null);
+        const shapeId = (leg.tripId && _gtfsTripToShape) ? _gtfsTripToShape[leg.tripId] : null;
+        const shape   = (shapeId && _gtfsShapes) ? _gtfsShapes[shapeId] : null;
+        if (shape && shape.length >= 2 && startCoord && endCoord) {
+          const idxA = nearestShapeIdx(shape, startCoord[0], startCoord[1]);
+          const idxB = nearestShapeIdx(shape, endCoord[0], endCoord[1]);
+          if (idxA >= 0 && idxB > idxA) {
+            // Forward direction: slice from boarding stop to alighting stop
+            const seg = shape.slice(idxA, idxB + 1);
+            for (const pt of seg) {
+              const last = stopLineCoords[stopLineCoords.length - 1];
+              if (!last || last[0] !== pt[0] || last[1] !== pt[1]) stopLineCoords.push(pt);
+            }
+            segAdded = true;
+          }
+        }
+      }
+      if (!segAdded) {
+        // Fallback: add just this stop's coordinate (straight line to next will be implicit)
+        const c = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
+        if (c) {
+          const last = stopLineCoords[stopLineCoords.length - 1];
+          if (!last || last[0] !== c[0] || last[1] !== c[1]) stopLineCoords.push(c);
+        }
       }
     }
     if (stop2 && isValidLatLon(stop2.lat, stop2.lon)) {
