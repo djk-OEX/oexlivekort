@@ -1366,11 +1366,16 @@ svg.map-icon {
       // maxSlots limits the forward search (each slot = 5 min); use 48 for a 4-hour window to
       // avoid selecting night-only routes, 96 (default) for the full 8-hour fallback window.
       // Returns { entry, depTime, minTime } where minTime = actual arrival time used.
-      const findConnectingDep = async (stopId, transferRouteId, prevTripId, prevHHMM, maxSlots = 96) => {
+      // prevRouteId: the actual route_id of the previous leg (optional). When provided it is
+      // used directly for the same-route secondary fallback so the fallback works even when
+      // _gtfsTripToRoute is empty (i.e. trips_by_id.json is not present).
+      const findConnectingDep = async (stopId, transferRouteId, prevTripId, prevHHMM, maxSlots = 96, prevRouteId = null) => {
         const allSlotKeys = _getDaySlotKeys();
         let arrivalHHMM = '';
         if (prevTripId && prevHHMM && prevHHMM.length >= 5) {
-          const prevRouteResolved = (_gtfsTripToRoute && _gtfsTripToRoute[prevTripId]) || prevTripId;
+          const prevRouteResolved = prevRouteId
+            ?? (_gtfsTripToRoute && _gtfsTripToRoute[prevTripId])
+            ?? prevTripId;
           const scanSlotKey = prevHHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(prevHHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
           const scanSlotIdx = allSlotKeys.indexOf(scanSlotKey);
           const scanFrom = scanSlotIdx >= 0 ? scanSlotIdx : 0;
@@ -1593,7 +1598,7 @@ svg.map-icon {
           for (const r of routesAtSid){
             if (!routesAtStop2.has(r)) continue;
             // Use a 4-hour (48-slot) limit to avoid picking night-only routes over day buses
-            const conn = await findConnectingDep(sid, r, leg1TripId, leg1HHMM, 48);
+            const conn = await findConnectingDep(sid, r, leg1TripId, leg1HHMM, 48, internalRoute1);
             if (!conn.entry) continue;
             // Use _hhmmToMinutes for correct comparison of GTFS extended hours (04:00–35:55)
             if (!bestConn || _hhmmToMinutes(conn.depTime) < _hhmmToMinutes(bestConn.depTime)){
@@ -1655,7 +1660,7 @@ svg.map-icon {
               dist: 0
             };
 
-            const connLN = await findConnectingDep(sid, transferRouteId, e1 ? (e1.trip_id || e1.route_id) : null, e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '', 48);
+            const connLN = await findConnectingDep(sid, transferRouteId, e1 ? (e1.trip_id || e1.route_id) : null, e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '', 48, e1 ? e1.route_id : null);
             return [leg1, makeLeg2Transfer(transferStop, transferRouteId, connLN)];
           }
         }
@@ -1702,8 +1707,9 @@ svg.map-icon {
         }
         if (bfsFoundPath) {
           const transferLegs = [];
-          let prevTripId = leg1TripId_bfs;
-          let prevHHMM   = leg1HHMM_bfs;
+          let prevTripId  = leg1TripId_bfs;
+          let prevRouteId = e1 ? e1.route_id : null;
+          let prevHHMM    = leg1HHMM_bfs;
           let pathOk = true;
           for (const hop of bfsFoundPath) {
             const stopInfo = _gtfsStopMap.get(hop.transferStopId);
@@ -1715,10 +1721,11 @@ svg.map-icon {
               lon: stopInfo.lon !== undefined ? stopInfo.lon : stopInfo.lng,
               dist: 0
             };
-            const conn = await findConnectingDep(hop.transferStopId, hop.routeId, prevTripId, prevHHMM, 48);
+            const conn = await findConnectingDep(hop.transferStopId, hop.routeId, prevTripId, prevHHMM, 48, prevRouteId);
             transferLegs.push(makeLeg2Transfer(transferStop, hop.routeId, conn));
-            prevTripId = conn.entry ? (conn.entry.trip_id || conn.entry.route_id) : null;
-            prevHHMM   = conn.depTime || conn.minTime;
+            prevTripId  = conn.entry ? (conn.entry.trip_id || conn.entry.route_id) : null;
+            prevRouteId = conn.entry ? conn.entry.route_id : null;
+            prevHHMM    = conn.depTime || conn.minTime;
           }
           if (pathOk && transferLegs.length === bfsFoundPath.length) {
             return [leg1, ...transferLegs];

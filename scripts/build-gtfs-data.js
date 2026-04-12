@@ -153,10 +153,19 @@ async function main() {
   // ── departures_5min ─────────────────────
   const stopTimes = parseCSV(reader.readFile('stop_times.txt'));
   const departureSlots = {};
+  const routeStopSet = {};   // route_id → [{seq, stopId}]
+  const stopRoutesMap = {};  // stop_id → Map<short_name, Set<headsign>>
 
   stopTimes.forEach(r => {
     const trip = tripMap[r.trip_id];
     if (!trip) return;
+
+    const stopId = r.stop_id;
+    if (!stopId) return;
+
+    // ── route_stops: collect all stops per route ──
+    if (!routeStopSet[trip.routeId]) routeStopSet[trip.routeId] = [];
+    routeStopSet[trip.routeId].push({ seq: parseInt(r.stop_sequence || '0', 10), stopId });
 
     const depTime = r.departure_time || '';
     const arrTime = r.arrival_time || '';
@@ -167,24 +176,63 @@ async function main() {
     const slot = String(h).padStart(2, '0') + '_' + String(Math.floor(m / 5) * 5).padStart(2, '0');
 
     departureSlots[slot] ||= {};
-    departureSlots[slot][r.stop_id] ||= [];
+    departureSlots[slot][stopId] ||= [];
 
     const entry = {
       route_id:   trip.routeId,
-      trip_id:    r.trip_id,            // ✅ FIX
+      trip_id:    r.trip_id,
       short_name: routeMap[trip.routeId],
       arrival:    arrTime,
       departure:  depTime
     };
     if (trip.headsign) entry.headsign = trip.headsign;
 
-    departureSlots[slot][r.stop_id].push(entry);
+    departureSlots[slot][stopId].push(entry);
+
+    // ── stop_routes: first stop per trip only (stop_sequence = 1) ──
+    if ((r.stop_sequence || '') === '1') {
+      const lineName = routeMap[trip.routeId];
+      if (lineName) {
+        if (!stopRoutesMap[stopId]) stopRoutesMap[stopId] = {};
+        if (!stopRoutesMap[stopId][lineName]) stopRoutesMap[stopId][lineName] = new Set();
+        if (trip.headsign) stopRoutesMap[stopId][lineName].add(trip.headsign);
+      }
+    }
   });
 
+  // ── route_stops.json ────────────────────
+  const routeStopsOut = {};
+  for (const [routeId, items] of Object.entries(routeStopSet)) {
+    items.sort((a, b) => a.seq - b.seq);
+    // Deduplicate while preserving order
+    const seen = new Set();
+    routeStopsOut[routeId] = [];
+    for (const { stopId } of items) {
+      if (!seen.has(stopId)) { seen.add(stopId); routeStopsOut[routeId].push(stopId); }
+    }
+  }
+  fs.writeFileSync(path.join(outDir, 'route_stops.json'), JSON.stringify(routeStopsOut));
+
+  // ── stop_routes.json ────────────────────
+  const stopRoutesOut = {};
+  for (const [stopId, lineMap] of Object.entries(stopRoutesMap)) {
+    stopRoutesOut[stopId] = Object.entries(lineMap).map(([line, heads]) => ({
+      line,
+      headsigns: [...heads].sort()
+    }));
+  }
+  fs.writeFileSync(path.join(outDir, 'stop_routes.json'), JSON.stringify(stopRoutesOut));
+
+  // ── departures_5min/*.json ───────────────
   const depDir = path.join(outDir, 'departures_5min');
   fs.mkdirSync(depDir, { recursive: true });
   Object.entries(departureSlots).forEach(([k, v]) => {
-    fs.writeFileSync(path.join(depDir, `${k}.json`), JSON.stringify(v));
+    const slotOut = {};
+    for (const [stopId, deps] of Object.entries(v)) {
+      deps.sort((a, b) => (a.departure || a.arrival || '').localeCompare(b.departure || b.arrival || ''));
+      slotOut[stopId] = deps.slice(0, 20);
+    }
+    fs.writeFileSync(path.join(depDir, `${k}.json`), JSON.stringify(slotOut));
   });
 
   console.log('✅ GTFS build færdig');
@@ -192,3 +240,5 @@ async function main() {
 
 main().catch(e => {
   console.error(e);
+  process.exit(1);
+});
