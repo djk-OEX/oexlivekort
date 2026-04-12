@@ -2010,6 +2010,26 @@ svg.map-icon {
           const walkDist = extStop.dist;
           const walkMins = Math.round(walkDist / 75);
           const walkLeg = { _isWalk: true, _walkDist: walkDist, _walkMins: walkMins, stop: extStop };
+          // Fetch the actual pedestrian route from user's position to the boarding stop
+          // so the walk segment is drawn as a real route rather than a straight line.
+          try {
+            const wUrl = 'https://atlas.microsoft.com/route/directions/json' +
+              '?api-version=1.0&travelMode=pedestrian' +
+              '&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY) +
+              '&query=' + encodeURIComponent(lat1 + ',' + lng1 + ':' + extStop.lat + ',' + extStop.lon);
+            const wRes = await fetch(wUrl, { credentials: 'omit' });
+            if (wRes.ok) {
+              const wData = await wRes.json();
+              const wRoute = ((wData.routes || [])[0]) || {};
+              const wCoords = [];
+              (wRoute.legs || []).forEach(wl => {
+                (wl.points || []).forEach(p => {
+                  if (isValidLatLon(p.latitude, p.longitude)) wCoords.push([p.longitude, p.latitude]);
+                });
+              });
+              if (wCoords.length >= 2) walkLeg._walkCoords = wCoords;
+            }
+          } catch(e) { console.warn('Walk-to-bus route fetch failed:', e); }
           legs   = [walkLeg, ...extLegs];
           stop1  = extStop;
           walkFrom = [lng1, lat1]; // user's starting position for route-line drawing
@@ -2136,10 +2156,15 @@ svg.map-icon {
     const stopLineCoords = [];
     for (let i = 0; i < legs.length; i++) {
       const leg = legs[i];
-      // Walk leg: draw a straight dashed line from the user's actual position to the
-      // boarding bus stop.  No shape lookup needed.
+      // Walk leg: draw the real pedestrian route when available (fetched from Azure Maps
+      // during the extended search), otherwise fall back to a straight line.
       if (leg._isWalk) {
-        if (walkFrom && leg.stop && isValidLatLon(leg.stop.lat, leg.stop.lon)) {
+        if (leg._walkCoords && leg._walkCoords.length >= 2) {
+          for (const pt of leg._walkCoords) {
+            const last = stopLineCoords[stopLineCoords.length - 1];
+            if (!last || last[0] !== pt[0] || last[1] !== pt[1]) stopLineCoords.push(pt);
+          }
+        } else if (walkFrom && leg.stop && isValidLatLon(leg.stop.lat, leg.stop.lon)) {
           stopLineCoords.push(walkFrom, [leg.stop.lon, leg.stop.lat]);
         }
         continue;
