@@ -118,6 +118,25 @@ svg.map-icon {
   box-shadow:0 4px 18px rgba(0,176,248,.25);
   pointer-events:auto;
 }
+#oex-transit-panel.oex-tp-collapsed {
+  padding-bottom:10px;
+}
+#oex-transit-panel.oex-tp-collapsed .oex-tp-body {
+  display:none;
+}
+#oex-tp-toggle {
+  margin-left:auto;
+  background:none;
+  border:1px solid #00B0F8;
+  border-radius:5px;
+  color:#00B0F8;
+  font-size:11px;
+  font-weight:700;
+  padding:2px 7px;
+  cursor:pointer;
+  line-height:1.4;
+  flex-shrink:0;
+}
 #oex-transit-panel .oex-tp-title {
   font-weight:700;
   font-size:13px;
@@ -218,7 +237,6 @@ svg.map-icon {
         <!-- PUNKT A -->
         <div class="card" id="card1">
           <h2></h2>
-          <label for="addr1">Adresse (autofind)</label>
           <input id="addr1" type="text" placeholder="Skriv adresse … (fx 'Gunnar Clausens Vej 82, 8260')" autocomplete="street-address" />
           <div id="sug1" class="suggestions" style="display:none;"></div>
           <label for="name1" style="display:none">Navn / label</label>
@@ -232,7 +250,6 @@ svg.map-icon {
         <!-- PUNKT B -->
         <div class="card" id="card2">
           <h2></h2>
-          <label for="addr2">Adresse (autofind)</label>
           <input id="addr2" type="text" placeholder="Skriv adresse …" autocomplete="street-address" />
           <div id="sug2" class="suggestions" style="display:none;"></div>
           <label for="name2" style="display:none">Navn / label</label>
@@ -270,8 +287,6 @@ svg.map-icon {
                 <circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>
               </svg>
             </button>
-          </div>
-          <div class="actions">
             <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
             <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
             <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
@@ -1792,14 +1807,16 @@ svg.map-icon {
     const isPedOnly = legs.length === 1 && legs[0]._isPedestrian;
     // Check if result contains a walk-to-bus leg (walk + bus combination)
     const hasWalkLeg = legs.length >= 1 && legs[0]._isWalk;
-    let html;
+    let titleText;
     if (isPedOnly) {
-      html = '<div class="oex-tp-title">🚶 Ingen bus fundet</div>';
+      titleText = '🚶 Ingen bus fundet';
     } else if (hasWalkLeg) {
-      html = '<div class="oex-tp-title">🚶→🚌 Gå + Bus A' + (hasB ? ' → B' : '') + '</div>';
+      titleText = '🚶→🚌 Gå + Bus A' + (hasB ? ' → B' : '');
     } else {
-      html = '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
+      titleText = '🚌 Bus A' + (hasB ? ' → B' : '');
     }
+    let html = '<div class="oex-tp-title"><span>' + titleText + '</span><button id="oex-tp-toggle" title="Udvid/Skjul">Skjul</button></div>';
+    html += '<div class="oex-tp-body">';
 
     const multiTransfer = legs.filter(l => l.isTransfer).length >= 2;
     let transferCount = 0;
@@ -1865,7 +1882,17 @@ svg.map-icon {
       html += '</div>';
     });
 
+    html += '</div>'; // end oex-tp-body
+
     panel.innerHTML = html;
+    const toggleBtn = panel.querySelector('#oex-tp-toggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', function(e){
+        e.stopPropagation();
+        const collapsed = panel.classList.toggle('oex-tp-collapsed');
+        toggleBtn.textContent = collapsed ? 'Udvid' : 'Skjul';
+      });
+    }
     const mapWrap = document.querySelector('.map-wrap');
     if (mapWrap) mapWrap.appendChild(panel);
   }
