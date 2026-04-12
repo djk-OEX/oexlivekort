@@ -880,6 +880,24 @@ svg.map-icon {
     return String(h % 24).padStart(2, '0') + hhmm.substring(2);
   }
 
+  // Converts HH:MM (or HH:MM:SS) to service-day minutes for ordered comparisons.
+  // Hours 00–03 are treated as 24–27 because they occur after midnight on the same
+  // GTFS service day (just like GTFS extended hours 24–27).
+  // Examples: "04:00" → 240, "23:59" → 1439, "25:30" → 1530, "01:30" → 1530.
+  function _toSvcMins(hhmm){
+    if (!hhmm || hhmm.length < 5) return -1;
+    let h = parseInt(hhmm.substring(0, 2), 10);
+    const m = parseInt(hhmm.substring(3, 5), 10);
+    if (isNaN(h) || isNaN(m)) return -1;
+    if (h < 4) h += 24;
+    return h * 60 + m;
+  }
+
+  // Hourly morning slots used as a Phase-2 fallback scan when the extended-time
+  // slot scan (Phase 1) finds no upcoming departure. These files contain buses that
+  // genuinely start a new trip after midnight with regular HH:MM departure times.
+  const _MORNING_FALLBACK_SLOTS = ['00_00','01_00','02_00','03_00','04_00','05_00','06_00','07_00','08_00'];
+
   function _getDepartureSlotKey(){
     const now = new Date();
     let h = now.getHours();
@@ -957,11 +975,12 @@ svg.map-icon {
       let nowH = currentDate.getHours();
       if (nowH < 4) nowH += 24;
       const minMins = nowH * 60 + currentDate.getMinutes() + 10;
-      const minHHMM = String(Math.floor(minMins / 60)).padStart(2,'0') + ':' + String(minMins % 60).padStart(2,'0');
       return entries
         .filter(e => {
           const t = (e.departure || e.arrival || '').substring(0, 5);
-          return !t || t >= minHHMM;
+          // Use _toSvcMins so that regular midnight times (00:xx–03:xx) compare
+          // correctly against extended-hour current time (e.g. "01:30" = svc 1530).
+          return !t || _toSvcMins(t) >= minMins;
         })
         .slice(0, 8).map(e => {
           const label = e.short_name || routeLookup[e.route_id] || e.route_id || '';
@@ -976,9 +995,20 @@ svg.map-icon {
   // then wraps back to 04:00. Used to scan for the next available departure.
   // Upper bound 35 covers GTFS extended times (28:xx–35:xx) used for overnight
   // services that continue well past midnight on the same service day.
+  // Early-morning slots 00:00–03:55 are appended at the end: they contain buses
+  // with regular midnight departure times that fall after 35:55 in service-day order
+  // and must be checked when no extended-time departure is found at night.
   function _getDaySlotKeys(){
     const keys = [];
     for (let h = 4; h <= 35; h++){
+      for (let m = 0; m < 60; m += 5){
+        keys.push(String(h).padStart(2,'0') + '_' + String(m).padStart(2,'0'));
+      }
+    }
+    // After-midnight files with regular 00:xx–03:xx departure times (e.g. night buses
+    // and urban services that start a new trip after midnight rather than using GTFS
+    // extended hours). Appended so they are scanned after extended-time slots.
+    for (let h = 0; h <= 3; h++){
       for (let m = 0; m < 60; m += 5){
         keys.push(String(h).padStart(2,'0') + '_' + String(m).padStart(2,'0'));
       }
@@ -994,15 +1024,38 @@ svg.map-icon {
       const currentKey = _getDepartureSlotKey();
       const allKeys = _getDaySlotKeys();
       const currentIdx = allKeys.indexOf(currentKey);
-      // Build search order: skip current and next slot (+5min rule), then wrap from start of day
+      // Build search order: skip current and next slot (+5min rule), then wrap from start of day.
+      // allKeys now includes 00:xx–03:xx slots at the end so midnight buses are reached naturally.
       const ordered = currentIdx >= 0
         ? [...allKeys.slice(currentIdx + 2), ...allKeys.slice(0, currentIdx + 2)]
         : allKeys;
-      const MAX_CHECKS = 60; // limit to ~5 hours (60 × 5 min slots) to avoid excessive requests
+      // Phase 1: scan up to 72 slots (~6 hours). Extended-time files past ~29:xx are usually
+      // sparse so this pass is fast even when all 72 slots return 404.
+      const MAX_PHASE1 = 72;
+      const checkedKeys = new Set();
       let checked = 0;
       for (const key of ordered){
-        if (checked >= MAX_CHECKS) break;
+        if (checked >= MAX_PHASE1) break;
+        checkedKeys.add(key);
         checked++;
+        try{
+          const r = await fetch('data/departures_5min/' + key + '.json.gz');
+          if (!r.ok) continue;
+          const data = await r.json();
+          const entries = data[stopId];
+          if (entries && entries.length){
+            const e = entries[0];
+            const shortName = e.short_name || routeLookup[e.route_id] || e.route_id || '';
+            const timeStr = (e.departure || e.arrival || '').substring(0, 8);
+            return { routeShortName: shortName, nextTime: timeStr };
+          }
+        }catch(e){ continue; }
+      }
+      // Phase 2: morning fallback – check hourly morning slots that were not yet scanned.
+      // Handles the "after midnight, no extended-time buses, first bus at 05:xx" case.
+      // Use the module-level constant _MORNING_FALLBACK_SLOTS
+      for (const key of _MORNING_FALLBACK_SLOTS){
+        if (checkedKeys.has(key)) continue;
         try{
           const r = await fetch('data/departures_5min/' + key + '.json.gz');
           if (!r.ok) continue;
@@ -1142,10 +1195,12 @@ svg.map-icon {
       const startIdx = currentIdx >= 0 ? Math.min(currentIdx + 2, allKeys.length - 1) : 0;
       const ordered = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
 
-      const MAX_CHECKS = 60; // up to 60 × 5-min slots = 5 hours ahead
+      const MAX_CHECKS = 72; // up to 72 × 5-min slots = 6 hours ahead
+      const routeCheckedKeys = new Set();
       let checked = 0;
       for (const key of ordered){
         if (checked >= MAX_CHECKS) break;
+        routeCheckedKeys.add(key);
         checked++;
         try{
           const r = await fetch('data/departures_5min/' + key + '.json.gz');
@@ -1159,6 +1214,25 @@ svg.map-icon {
             break;
           }
         }catch(_){ continue; }
+      }
+      // Morning fallback: if no departure found in 6-hour window, check hourly morning slots.
+      if (!tripId){
+        // Use the module-level constant _MORNING_FALLBACK_SLOTS
+        for (const key of _MORNING_FALLBACK_SLOTS){
+          if (routeCheckedKeys.has(key)) continue;
+          try{
+            const r = await fetch('data/departures_5min/' + key + '.json.gz');
+            if (!r.ok) continue;
+            const data = await r.json();
+            const entries = data[stop1.stop_id];
+            if (entries && entries.length){
+              const e = entries[0];
+              tripId = e.route_id;
+              routeShortName = e.short_name || routeLookup[tripId] || tripId || '';
+              break;
+            }
+          }catch(_){ continue; }
+        }
       }
       } // end if (!forcedTripId)
       if (tripId && !routeShortName) routeShortName = routeLookup[tripId] || tripId || '';
@@ -1257,9 +1331,23 @@ svg.map-icon {
         const sid = String(stopId);
         const fi = (fromIdx !== undefined && fromIdx >= 0) ? fromIdx : startIdx;
         const ordered = [...allKeys.slice(fi), ...allKeys.slice(0, fi)];
-        for (let i = 0; i < Math.min(60, ordered.length); i++){
+        // Phase 1: up to 72 slots (~6 hours of extended time)
+        const gfdChecked = new Set();
+        for (let i = 0; i < Math.min(72, ordered.length); i++){
+          gfdChecked.add(ordered[i]);
           try{
             const r = await fetch('data/departures_5min/'+ordered[i]+'.json.gz');
+            if (!r.ok) continue;
+            const d = await r.json();
+            if (d[sid] && d[sid].length) return d[sid][0];
+          }catch(_){}
+        }
+        // Phase 2: morning fallback for the "no buses at night" case
+        // Use the module-level constant _MORNING_FALLBACK_SLOTS
+        for (const key of _MORNING_FALLBACK_SLOTS){
+          if (gfdChecked.has(key)) continue;
+          try{
+            const r = await fetch('data/departures_5min/'+key+'.json.gz');
             if (!r.ok) continue;
             const d = await r.json();
             if (d[sid] && d[sid].length) return d[sid][0];
@@ -1406,11 +1494,13 @@ svg.map-icon {
       };
 
       // ── Scan slots from startIdx to find a direct route to stop2 first ──
-      // Always prefer a direct route over a transfer; check up to 60 forward windows.
+      // Always prefer a direct route over a transfer; check up to 72 forward windows.
       const orderedFromStart = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
       let bestDirectEntry = null;
       let firstEntry = null; // first departure at stop1 found (fallback for transfer search)
-      for (let i = 0; i < Math.min(60, orderedFromStart.length); i++){
+      const directCheckedKeys = new Set();
+      for (let i = 0; i < Math.min(72, orderedFromStart.length); i++){
+        directCheckedKeys.add(orderedFromStart[i]);
         try{
           const r = await fetch('data/departures_5min/'+orderedFromStart[i]+'.json.gz');
           if (!r.ok) continue;
@@ -1429,6 +1519,31 @@ svg.map-icon {
           }
         }catch(_){ continue; }
         if (bestDirectEntry) break;
+      }
+      // Morning fallback for direct-route scan
+      if (!bestDirectEntry){
+        // Use the module-level constant _MORNING_FALLBACK_SLOTS
+        for (const key of _MORNING_FALLBACK_SLOTS){
+          if (directCheckedKeys.has(key)) continue;
+          try{
+            const r = await fetch('data/departures_5min/'+key+'.json.gz');
+            if (!r.ok) continue;
+            const d = await r.json();
+            const entries = d[String(stop1.stop_id)];
+            if (entries && entries.length){
+              if (!firstEntry) firstEntry = entries[0];
+              for (const e of entries){
+                const internalRoute = ((_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id);
+                const stopsOnRoute = routeStopsData[internalRoute] || [];
+                if (routeServesStop2(stopsOnRoute)){
+                  bestDirectEntry = e;
+                  break;
+                }
+              }
+            }
+          }catch(_){ continue; }
+          if (bestDirectEntry) break;
+        }
       }
 
       if (bestDirectEntry){
@@ -1646,18 +1761,34 @@ svg.map-icon {
   }
 
   // legs: array of { stop, routeShortName, routeLongName?, routeHeadsign?, deps, nextDep, isTransfer? }
-  // Each leg gets its own section with bus line badge, stop info, departures and a clickable "Næste afgang" row
+  // Each leg gets its own section with bus line badge, stop info, departures and a clickable "Næste afgang" row.
+  // A leg with _isPedestrian:true is rendered as a pedestrian last-resort fallback section.
   function showTransitPanel(legs, hasB){
     const existing = document.getElementById('oex-transit-panel');
     if (existing) existing.remove();
     if (!legs || !legs.length) return;
     const panel = document.createElement('div');
     panel.id = 'oex-transit-panel';
-    let html = '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
+
+    // Check if the entire result is a pedestrian-fallback (no bus found)
+    const isPedOnly = legs.length === 1 && legs[0]._isPedestrian;
+    let html = isPedOnly
+      ? '<div class="oex-tp-title">🚶 Ingen bus fundet</div>'
+      : '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
 
     const multiTransfer = legs.filter(l => l.isTransfer).length >= 2;
     let transferCount = 0;
     legs.forEach((leg, i) => {
+      // Pedestrian last-resort leg
+      if (leg._isPedestrian){
+        html += '<div class="oex-tp-leg" style="margin-top:4px;padding-top:0;">';
+        html += '<div style="color:#bbbbbb;font-size:12px;margin-bottom:4px;">Ingen bus stoppesteder fundet inden for 1 km – eller ingen afgange i de næste timer.</div>';
+        if (leg._walkLabel){
+          html += '<div class="oex-tp-row" style="margin-top:4px;">🚶 Gåtur til B: '+escapeHtml(leg._walkLabel)+'</div>';
+        }
+        html += '</div>';
+        return;
+      }
       const stop = leg.stop;
       if (!stop) return;
       const isFirst = i === 0;
@@ -1944,6 +2075,45 @@ svg.map-icon {
       routeSource.add(new atlas.data.Feature(new atlas.data.LineString(stopLineCoords)));
       try { map.setCamera({ bounds: atlas.data.BoundingBox.fromLatLngs(stopLineCoords), padding: 60, duration: 500 }); } catch(e) {}
       setTimeout(safeResize, 50);
+    }
+
+    // ── Pedestrian last-resort fallback ──────────────────────────────────────────────
+    // Triggered when no usable bus leg was found (no stops within 1 km, or all legs
+    // have neither current departures nor a scheduled next departure) AND both A and B
+    // are set. A walking route is calculated and shown instead.
+    const noValidBus = hasB && (
+      legs.length === 0 ||
+      legs.every(l => !l.nextDep && (!l.deps || !l.deps.length))
+    );
+    if (noValidBus){
+      try{
+        const walkUrl = 'https://atlas.microsoft.com/route/directions/json' +
+          '?api-version=1.0&travelMode=pedestrian' +
+          '&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY) +
+          '&query=' + encodeURIComponent(lat1 + ',' + lng1 + ':' + lat2 + ',' + lng2);
+        const walkRes = await fetch(walkUrl, { credentials: 'omit' });
+        if (walkRes.ok){
+          const walkData = await walkRes.json();
+          const walkRoute = ((walkData.routes || [])[0]) || {};
+          const walkLegs = walkRoute.legs || [];
+          const walkCoords = [];
+          walkLegs.forEach(wl => { (wl.points || []).forEach(p => { if (isValidLatLon(p.latitude, p.longitude)) walkCoords.push([p.longitude, p.latitude]); }); });
+          const walkSummary = walkRoute.summary || {};
+          if (walkCoords.length >= 2){
+            routeSource.add(new atlas.data.Feature(new atlas.data.LineString(walkCoords)));
+            try { map.setCamera({ bounds: atlas.data.BoundingBox.fromLatLngs(walkCoords), padding: 60, duration: 500 }); } catch(e) {}
+            setTimeout(safeResize, 50);
+          }
+          const walkLabel = (walkSummary.lengthInMeters && walkSummary.travelTimeInSeconds)
+            ? formatRouteLabel(walkSummary.lengthInMeters, walkSummary.travelTimeInSeconds)
+            : null;
+          showTransitPanel([{ _isPedestrian: true, _walkLabel: walkLabel }], hasB);
+          return;
+        }
+      }catch(e){ console.warn('Pedestrian fallback fejl:', e); }
+      // If walking route also fails, show the no-bus panel without a label
+      showTransitPanel([{ _isPedestrian: true, _walkLabel: null }], hasB);
+      return;
     }
 
     showTransitPanel(legs, hasB);
