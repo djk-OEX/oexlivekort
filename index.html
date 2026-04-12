@@ -880,6 +880,24 @@ svg.map-icon {
     return String(h % 24).padStart(2, '0') + hhmm.substring(2);
   }
 
+  // Converts HH:MM (or HH:MM:SS) to service-day minutes for ordered comparisons.
+  // Hours 00–03 are treated as 24–27 because they occur after midnight on the same
+  // GTFS service day (just like GTFS extended hours 24–27).
+  // Examples: "04:00" → 240, "23:59" → 1439, "25:30" → 1530, "01:30" → 1530.
+  function _toSvcMins(hhmm){
+    if (!hhmm || hhmm.length < 5) return -1;
+    let h = parseInt(hhmm.substring(0, 2), 10);
+    const m = parseInt(hhmm.substring(3, 5), 10);
+    if (isNaN(h) || isNaN(m)) return -1;
+    if (h < 4) h += 24;
+    return h * 60 + m;
+  }
+
+  // Hourly morning slots used as a Phase-2 fallback scan when the extended-time
+  // slot scan (Phase 1) finds no upcoming departure. These files contain buses that
+  // genuinely start a new trip after midnight with regular HH:MM departure times.
+  const _MORNING_FALLBACK_SLOTS = ['00_00','01_00','02_00','03_00','04_00','05_00','06_00','07_00','08_00'];
+
   function _getDepartureSlotKey(){
     const now = new Date();
     let h = now.getHours();
@@ -957,11 +975,12 @@ svg.map-icon {
       let nowH = currentDate.getHours();
       if (nowH < 4) nowH += 24;
       const minMins = nowH * 60 + currentDate.getMinutes() + 10;
-      const minHHMM = String(Math.floor(minMins / 60)).padStart(2,'0') + ':' + String(minMins % 60).padStart(2,'0');
       return entries
         .filter(e => {
           const t = (e.departure || e.arrival || '').substring(0, 5);
-          return !t || t >= minHHMM;
+          // Use _toSvcMins so that regular midnight times (00:xx–03:xx) compare
+          // correctly against extended-hour current time (e.g. "01:30" = svc 1530).
+          return !t || _toSvcMins(t) >= minMins;
         })
         .slice(0, 8).map(e => {
           const label = e.short_name || routeLookup[e.route_id] || e.route_id || '';
@@ -976,9 +995,20 @@ svg.map-icon {
   // then wraps back to 04:00. Used to scan for the next available departure.
   // Upper bound 35 covers GTFS extended times (28:xx–35:xx) used for overnight
   // services that continue well past midnight on the same service day.
+  // Early-morning slots 00:00–03:55 are appended at the end: they contain buses
+  // with regular midnight departure times that fall after 35:55 in service-day order
+  // and must be checked when no extended-time departure is found at night.
   function _getDaySlotKeys(){
     const keys = [];
     for (let h = 4; h <= 35; h++){
+      for (let m = 0; m < 60; m += 5){
+        keys.push(String(h).padStart(2,'0') + '_' + String(m).padStart(2,'0'));
+      }
+    }
+    // After-midnight files with regular 00:xx–03:xx departure times (e.g. night buses
+    // and urban services that start a new trip after midnight rather than using GTFS
+    // extended hours). Appended so they are scanned after extended-time slots.
+    for (let h = 0; h <= 3; h++){
       for (let m = 0; m < 60; m += 5){
         keys.push(String(h).padStart(2,'0') + '_' + String(m).padStart(2,'0'));
       }
@@ -994,15 +1024,38 @@ svg.map-icon {
       const currentKey = _getDepartureSlotKey();
       const allKeys = _getDaySlotKeys();
       const currentIdx = allKeys.indexOf(currentKey);
-      // Build search order: skip current and next slot (+5min rule), then wrap from start of day
+      // Build search order: skip current and next slot (+5min rule), then wrap from start of day.
+      // allKeys now includes 00:xx–03:xx slots at the end so midnight buses are reached naturally.
       const ordered = currentIdx >= 0
         ? [...allKeys.slice(currentIdx + 2), ...allKeys.slice(0, currentIdx + 2)]
         : allKeys;
-      const MAX_CHECKS = 60; // limit to ~5 hours (60 × 5 min slots) to avoid excessive requests
+      // Phase 1: scan up to 72 slots (~6 hours). Extended-time files past ~29:xx are usually
+      // sparse so this pass is fast even when all 72 slots return 404.
+      const MAX_PHASE1 = 72;
+      const checkedKeys = new Set();
       let checked = 0;
       for (const key of ordered){
-        if (checked >= MAX_CHECKS) break;
+        if (checked >= MAX_PHASE1) break;
+        checkedKeys.add(key);
         checked++;
+        try{
+          const r = await fetch('data/departures_5min/' + key + '.json.gz');
+          if (!r.ok) continue;
+          const data = await r.json();
+          const entries = data[stopId];
+          if (entries && entries.length){
+            const e = entries[0];
+            const shortName = e.short_name || routeLookup[e.route_id] || e.route_id || '';
+            const timeStr = (e.departure || e.arrival || '').substring(0, 8);
+            return { routeShortName: shortName, nextTime: timeStr };
+          }
+        }catch(e){ continue; }
+      }
+      // Phase 2: morning fallback – check hourly morning slots that were not yet scanned.
+      // Handles the "after midnight, no extended-time buses, first bus at 05:xx" case.
+      // Use the module-level constant _MORNING_FALLBACK_SLOTS
+      for (const key of _MORNING_FALLBACK_SLOTS){
+        if (checkedKeys.has(key)) continue;
         try{
           const r = await fetch('data/departures_5min/' + key + '.json.gz');
           if (!r.ok) continue;
@@ -1142,10 +1195,12 @@ svg.map-icon {
       const startIdx = currentIdx >= 0 ? Math.min(currentIdx + 2, allKeys.length - 1) : 0;
       const ordered = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
 
-      const MAX_CHECKS = 60; // up to 60 × 5-min slots = 5 hours ahead
+      const MAX_CHECKS = 72; // up to 72 × 5-min slots = 6 hours ahead
+      const routeCheckedKeys = new Set();
       let checked = 0;
       for (const key of ordered){
         if (checked >= MAX_CHECKS) break;
+        routeCheckedKeys.add(key);
         checked++;
         try{
           const r = await fetch('data/departures_5min/' + key + '.json.gz');
@@ -1159,6 +1214,25 @@ svg.map-icon {
             break;
           }
         }catch(_){ continue; }
+      }
+      // Morning fallback: if no departure found in 6-hour window, check hourly morning slots.
+      if (!tripId){
+        // Use the module-level constant _MORNING_FALLBACK_SLOTS
+        for (const key of _MORNING_FALLBACK_SLOTS){
+          if (routeCheckedKeys.has(key)) continue;
+          try{
+            const r = await fetch('data/departures_5min/' + key + '.json.gz');
+            if (!r.ok) continue;
+            const data = await r.json();
+            const entries = data[stop1.stop_id];
+            if (entries && entries.length){
+              const e = entries[0];
+              tripId = e.route_id;
+              routeShortName = e.short_name || routeLookup[tripId] || tripId || '';
+              break;
+            }
+          }catch(_){ continue; }
+        }
       }
       } // end if (!forcedTripId)
       if (tripId && !routeShortName) routeShortName = routeLookup[tripId] || tripId || '';
@@ -1257,9 +1331,23 @@ svg.map-icon {
         const sid = String(stopId);
         const fi = (fromIdx !== undefined && fromIdx >= 0) ? fromIdx : startIdx;
         const ordered = [...allKeys.slice(fi), ...allKeys.slice(0, fi)];
-        for (let i = 0; i < Math.min(60, ordered.length); i++){
+        // Phase 1: up to 72 slots (~6 hours of extended time)
+        const gfdChecked = new Set();
+        for (let i = 0; i < Math.min(72, ordered.length); i++){
+          gfdChecked.add(ordered[i]);
           try{
             const r = await fetch('data/departures_5min/'+ordered[i]+'.json.gz');
+            if (!r.ok) continue;
+            const d = await r.json();
+            if (d[sid] && d[sid].length) return d[sid][0];
+          }catch(_){}
+        }
+        // Phase 2: morning fallback for the "no buses at night" case
+        // Use the module-level constant _MORNING_FALLBACK_SLOTS
+        for (const key of _MORNING_FALLBACK_SLOTS){
+          if (gfdChecked.has(key)) continue;
+          try{
+            const r = await fetch('data/departures_5min/'+key+'.json.gz');
             if (!r.ok) continue;
             const d = await r.json();
             if (d[sid] && d[sid].length) return d[sid][0];
@@ -1406,11 +1494,13 @@ svg.map-icon {
       };
 
       // ── Scan slots from startIdx to find a direct route to stop2 first ──
-      // Always prefer a direct route over a transfer; check up to 60 forward windows.
+      // Always prefer a direct route over a transfer; check up to 72 forward windows.
       const orderedFromStart = [...allKeys.slice(startIdx), ...allKeys.slice(0, startIdx)];
       let bestDirectEntry = null;
       let firstEntry = null; // first departure at stop1 found (fallback for transfer search)
-      for (let i = 0; i < Math.min(60, orderedFromStart.length); i++){
+      const directCheckedKeys = new Set();
+      for (let i = 0; i < Math.min(72, orderedFromStart.length); i++){
+        directCheckedKeys.add(orderedFromStart[i]);
         try{
           const r = await fetch('data/departures_5min/'+orderedFromStart[i]+'.json.gz');
           if (!r.ok) continue;
@@ -1429,6 +1519,31 @@ svg.map-icon {
           }
         }catch(_){ continue; }
         if (bestDirectEntry) break;
+      }
+      // Morning fallback for direct-route scan
+      if (!bestDirectEntry){
+        // Use the module-level constant _MORNING_FALLBACK_SLOTS
+        for (const key of _MORNING_FALLBACK_SLOTS){
+          if (directCheckedKeys.has(key)) continue;
+          try{
+            const r = await fetch('data/departures_5min/'+key+'.json.gz');
+            if (!r.ok) continue;
+            const d = await r.json();
+            const entries = d[String(stop1.stop_id)];
+            if (entries && entries.length){
+              if (!firstEntry) firstEntry = entries[0];
+              for (const e of entries){
+                const internalRoute = ((_gtfsTripToRoute && _gtfsTripToRoute[e.route_id]) || e.route_id);
+                const stopsOnRoute = routeStopsData[internalRoute] || [];
+                if (routeServesStop2(stopsOnRoute)){
+                  bestDirectEntry = e;
+                  break;
+                }
+              }
+            }
+          }catch(_){ continue; }
+          if (bestDirectEntry) break;
+        }
       }
 
       if (bestDirectEntry){
@@ -1646,18 +1761,56 @@ svg.map-icon {
   }
 
   // legs: array of { stop, routeShortName, routeLongName?, routeHeadsign?, deps, nextDep, isTransfer? }
-  // Each leg gets its own section with bus line badge, stop info, departures and a clickable "Næste afgang" row
+  // Each leg gets its own section with bus line badge, stop info, departures and a clickable "Næste afgang" row.
+  // A leg with _isPedestrian:true is rendered as a pedestrian last-resort fallback section.
   function showTransitPanel(legs, hasB){
     const existing = document.getElementById('oex-transit-panel');
     if (existing) existing.remove();
     if (!legs || !legs.length) return;
     const panel = document.createElement('div');
     panel.id = 'oex-transit-panel';
-    let html = '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
+
+    // Check if the entire result is a pedestrian-fallback (no bus found within 3 km)
+    const isPedOnly = legs.length === 1 && legs[0]._isPedestrian;
+    // Check if result contains a walk-to-bus leg (walk + bus combination)
+    const hasWalkLeg = legs.length >= 1 && legs[0]._isWalk;
+    let html;
+    if (isPedOnly) {
+      html = '<div class="oex-tp-title">🚶 Ingen bus fundet</div>';
+    } else if (hasWalkLeg) {
+      html = '<div class="oex-tp-title">🚶→🚌 Gå + Bus A' + (hasB ? ' → B' : '') + '</div>';
+    } else {
+      html = '<div class="oex-tp-title">🚌 Bus A' + (hasB ? ' → B' : '') + '</div>';
+    }
 
     const multiTransfer = legs.filter(l => l.isTransfer).length >= 2;
     let transferCount = 0;
     legs.forEach((leg, i) => {
+      // Pedestrian last-resort leg (no bus found within 3 km)
+      if (leg._isPedestrian){
+        html += '<div class="oex-tp-leg" style="margin-top:4px;padding-top:0;">';
+        html += '<div style="color:#bbbbbb;font-size:12px;margin-bottom:4px;">Ingen bus stoppesteder fundet inden for 3 km – eller ingen afgange i de næste timer.</div>';
+        if (leg._walkLabel){
+          html += '<div class="oex-tp-row" style="margin-top:4px;">🚶 Gåtur til B: '+escapeHtml(leg._walkLabel)+'</div>';
+        }
+        html += '</div>';
+        return;
+      }
+      // Walk-to-bus leg: shows walking distance/time to the boarding bus stop
+      if (leg._isWalk){
+        const wDist = leg._walkDist ? Math.round(leg._walkDist) + ' m' : '';
+        const wMins = leg._walkMins ? leg._walkMins + ' min' : '';
+        const wLabel = [wDist, wMins].filter(Boolean).join(' · ');
+        const stopName = leg.stop ? escapeHtml(leg.stop.name || '') : '';
+        html += '<div class="oex-tp-leg" style="margin-top:4px;padding-top:0;">';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">';
+        html += '<span style="font-size:15px;">🚶</span>';
+        html += '<span style="font-size:12px;"><strong>Gå fra A:</strong>';
+        if (wLabel) html += ' <span style="color:#bbbbbb;">' + escapeHtml(wLabel) + '</span>';
+        if (stopName) html += ' → ' + stopName;
+        html += '</span></div></div>';
+        return;
+      }
       const stop = leg.stop;
       if (!stop) return;
       const isFirst = i === 0;
@@ -1672,7 +1825,12 @@ svg.map-icon {
           (leg.fromStop ? escapeHtml(leg.fromStop) + ' → ' : '→ ') +
           escapeHtml(headsignText) + '</span>'
         : '';
-      const stopLabel = isFirst ? 'Fra A' : (isTransfer ? (multiTransfer ? 'Skift ' + transferCount : 'Skift') : 'Til B');
+      // First non-walk bus leg: 'Stig på' (walk+bus) or 'Fra A' (bus-only).
+      // Remaining legs: 'Skift' for transfers, 'Til B' for the fallback independent leg2.
+      const isBoardingLeg = isFirst || (hasWalkLeg && i === 1 && !isTransfer);
+      const stopLabel = isBoardingLeg
+        ? (hasWalkLeg ? 'Stig på' : 'Fra A')
+        : (isTransfer ? (multiTransfer ? 'Skift ' + transferCount : 'Skift') : 'Til B');
       const distText = stop.dist ? ' <span style="color:#bbbbbb;font-size:11px;">('+stop.dist+' m til fods)</span>' : '';
 
       html += '<div class="oex-tp-leg" style="margin-top:'+(isFirst?'4':'10')+'px;padding-top:'+(isFirst?'0':'8')+'px;'+(isFirst?'':'border-top:1px solid #333;')+'">';
@@ -1763,9 +1921,11 @@ svg.map-icon {
     }
     if (!legs) legs = [];
 
-    // Fetch departures and nextDep for each leg
-    for (const leg of legs){
-      if (leg.stop && leg.stop.stop_id){
+    // ── Helper: fetch departure times for a list of bus legs ─────────────────────────
+    // Populates leg.deps and leg.nextDep in-place.  Skips _isWalk legs.
+    const _fetchLegDeps = async (legList) => {
+      for (const leg of legList){
+        if (leg._isWalk || !leg.stop || !leg.stop.stop_id) continue;
         const allDeps = await fetchGtfsDepartures(leg.stop.stop_id);
         // Filter to this leg's bus line when known
         if (leg.routeShortName && allDeps && allDeps.length){
@@ -1774,16 +1934,11 @@ svg.map-icon {
         } else {
           leg.deps = allDeps;
         }
-        // For leg2: suppress any current-window entries that predate leg1 departure.
-        // minDepartureTime is set on leg2 objects (both transfer and fallback) to ensure
-        // the departure list never shows times before the user could realistically board.
+        // For leg2+: suppress current-window entries that predate leg1 departure
         if (leg.minDepartureTime) {
           const minT = leg.minDepartureTime;
           leg.deps = leg.deps ? leg.deps.filter(d => !d.time || d.time >= minT) : leg.deps;
         }
-        // Use the pre-calculated departure time (scheduledDepTime) for the connecting route
-        // whenever it is available (transfer legs and fallback leg2), so the panel always
-        // shows the correct route/time and the "Næste afgang" button appears.
         if (leg.scheduledDepTime) {
           const schedEntry = { name: leg.routeShortName, time: leg.scheduledDepTime };
           const hasRouteInDeps = leg.deps && leg.deps.some(d => d.name === leg.routeShortName);
@@ -1797,19 +1952,151 @@ svg.map-icon {
           leg.nextDep = { routeShortName: leg.routeShortName || (leg.deps[0] && leg.deps[0].name) || '', nextTime: leg.deps[0].time };
         }
       }
+    };
+
+    // Fetch departures for initial legs (from the 1 km search)
+    await _fetchLegDeps(legs);
+
+    // ── Check whether the 1 km result is usable ─────────────────────────────────────
+    // Must do this BEFORE drawing markers so we can run the extended search first.
+    const noValidBus1km = hasB && (
+      legs.length === 0 ||
+      legs.every(l => !l._isWalk && !l.nextDep && (!l.deps || !l.deps.length))
+    );
+
+    // ── Extended pedestrian-to-bus fallback: expand search radius to 3 km ───────────
+    // When no valid bus stop is found within 1 km, look for stops up to 3 km away.
+    // The user will need to walk to the boarding stop; skipSlots is calculated from
+    // actual walking time (~75 m/min ≈ 4.5 km/h) so the route search only returns
+    // buses the user can realistically catch after walking.
+    // Result: legs = [_isWalk leg, ...bus legs]  shown as "🚶 Walk X m → 🚌 Line Y"
+    // walkFrom: [lng, lat] of the user's starting position, used for route-line drawing.
+    let walkFrom = null;
+    if (noValidBus1km && hasB) {
+      const extCandidates = await findNearestGtfsStops(lat1, lng1, 15, 3000);
+      // Skip stops already tried in the 1 km search
+      const alreadyIds = new Set(stop1Candidates.map(s => String(s.stop_id)));
+      const extOnly = extCandidates.filter(c => !alreadyIds.has(String(c.stop_id)));
+
+      let extLegs = null, extStop = null;
+      let extBestTransfer = null, extBestTransferStop = null;
+      let extBest2hop = null, extBest2hopStop = null;
+
+      for (const candidate of extOnly.slice(0, 8)) {
+        // Walking time in 5-min slots: dist_m / (75 m/min × 5 min/slot) = dist / 375
+        const skipSlots = Math.max(2, Math.ceil((candidate.dist || 0) / 375));
+        const cLegs = await findTransitLegs(candidate, stop2, skipSlots);
+        if (!cLegs || !cLegs.length) continue;
+        const isDirect    = cLegs.length === 1;
+        const is1Transfer = cLegs.length === 2 && !!cLegs[1].isTransfer;
+        const isMultiHop  = cLegs.length >= 3;
+        if (isDirect)    { extLegs = cLegs; extStop = candidate; break; }
+        if (is1Transfer  && !extBestTransfer) { extBestTransfer = cLegs; extBestTransferStop = candidate; }
+        if (isMultiHop   && !extBest2hop)     { extBest2hop = cLegs;     extBest2hopStop = candidate; }
+        if (!extLegs)    { extLegs = cLegs; extStop = candidate; }
+      }
+      // Prefer direct > 1-transfer > multi-hop (mirrors the 1 km logic)
+      if (extBestTransfer && !(extLegs && extLegs.length === 1)) {
+        extLegs = extBestTransfer; extStop = extBestTransferStop;
+      }
+      if (extBest2hop && extLegs && !(extLegs.length === 1 || (extLegs.length === 2 && !!extLegs[1].isTransfer))) {
+        extLegs = extBest2hop; extStop = extBest2hopStop;
+      }
+
+      if (extLegs && extStop) {
+        await _fetchLegDeps(extLegs);
+        const hasValidExtDeps = extLegs.some(l => l.nextDep || (l.deps && l.deps.length));
+        if (hasValidExtDeps) {
+          const walkDist = extStop.dist;
+          const walkMins = Math.round(walkDist / 75);
+          const walkLeg = { _isWalk: true, _walkDist: walkDist, _walkMins: walkMins, stop: extStop };
+          // Fetch the actual pedestrian route from user's position to the boarding stop
+          // so the walk segment is drawn as a real route rather than a straight line.
+          try {
+            const wUrl = 'https://atlas.microsoft.com/route/directions/json' +
+              '?api-version=1.0&travelMode=pedestrian' +
+              '&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY) +
+              '&query=' + encodeURIComponent(lat1 + ',' + lng1 + ':' + extStop.lat + ',' + extStop.lon);
+            const wRes = await fetch(wUrl, { credentials: 'omit' });
+            if (wRes.ok) {
+              const wData = await wRes.json();
+              const wRoute = ((wData.routes || [])[0]) || {};
+              const wCoords = [];
+              (wRoute.legs || []).forEach(wl => {
+                (wl.points || []).forEach(p => {
+                  if (isValidLatLon(p.latitude, p.longitude)) wCoords.push([p.longitude, p.latitude]);
+                });
+              });
+              if (wCoords.length >= 2) walkLeg._walkCoords = wCoords;
+            }
+          } catch(e) { console.warn('Walk-to-bus route fetch failed:', e); }
+          legs   = [walkLeg, ...extLegs];
+          stop1  = extStop;
+          walkFrom = [lng1, lat1]; // user's starting position for route-line drawing
+        }
+      }
     }
 
-    // Add 🚌 A marker for leg-1 stop (nearest to A)
-    if (stop1){
+    // Determine final bus-validity state after potential extended search
+    const noValidBusFinal = hasB && (
+      legs.length === 0 ||
+      legs.every(l => !l._isWalk && !l.nextDep && (!l.deps || !l.deps.length))
+    );
+
+    // ── Full pedestrian fallback: no bus within 3 km ─────────────────────────────────
+    // Only triggered when even the extended 3 km search found nothing.
+    if (noValidBusFinal) {
+      try{
+        const walkUrl = 'https://atlas.microsoft.com/route/directions/json' +
+          '?api-version=1.0&travelMode=pedestrian' +
+          '&subscription-key=' + encodeURIComponent(AZURE_MAPS_KEY) +
+          '&query=' + encodeURIComponent(lat1 + ',' + lng1 + ':' + lat2 + ',' + lng2);
+        const walkRes = await fetch(walkUrl, { credentials: 'omit' });
+        if (walkRes.ok){
+          const walkData = await walkRes.json();
+          const walkRoute = ((walkData.routes || [])[0]) || {};
+          const walkLegs = walkRoute.legs || [];
+          const walkCoords = [];
+          walkLegs.forEach(wl => { (wl.points || []).forEach(p => { if (isValidLatLon(p.latitude, p.longitude)) walkCoords.push([p.longitude, p.latitude]); }); });
+          const walkSummary = walkRoute.summary || {};
+          if (walkCoords.length >= 2){
+            routeSource.add(new atlas.data.Feature(new atlas.data.LineString(walkCoords)));
+            try { map.setCamera({ bounds: atlas.data.BoundingBox.fromLatLngs(walkCoords), padding: 60, duration: 500 }); } catch(e) {}
+            setTimeout(safeResize, 50);
+          }
+          const walkLabel = (walkSummary.lengthInMeters && walkSummary.travelTimeInSeconds)
+            ? formatRouteLabel(walkSummary.lengthInMeters, walkSummary.travelTimeInSeconds)
+            : null;
+          showTransitPanel([{ _isPedestrian: true, _walkLabel: walkLabel }], hasB);
+          return;
+        }
+      }catch(e){ console.warn('Pedestrian fallback fejl:', e); }
+      showTransitPanel([{ _isPedestrian: true, _walkLabel: null }], hasB);
+      return;
+    }
+
+    // ── Draw markers ─────────────────────────────────────────────────────────────────
+    // When a walk leg is prepended, add a 🚶 marker at the user's starting position.
+    if (walkFrom) {
+      const mw = new atlas.HtmlMarker({
+        position: walkFrom,
+        htmlContent: '<div style="background:#000;color:#ffffff;border:2px solid #ffffff;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;">🚶 A</div>'
+      });
+      map.markers.add(mw); busMarkers.push(mw);
+    }
+    // 🚌 A marker at the boarding bus stop (stop1 = boarding stop; for walk+bus this is
+    // the first bus stop, not the user's starting position).
+    if (stop1) {
       const m = new atlas.HtmlMarker({
         position: [stop1.lon, stop1.lat],
         htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 A</div>'
       });
       map.markers.add(m); busMarkers.push(m);
-      const l1 = legs[0] || {};
-      _attachBusStopPopup(m, stop1, l1.deps || [], l1.nextDep || null);
+      // When walk leg is prepended, the first bus leg is legs[1]; use that for the popup.
+      const busLeg1 = (walkFrom && legs.length >= 2) ? legs[1] : (legs[0] || {});
+      _attachBusStopPopup(m, stop1, busLeg1.deps || [], busLeg1.nextDep || null);
     }
-    // Add 🚌 ⇄ marker for every transfer leg (supports 1 or 2 transfers)
+    // 🚌 ⇄ marker for every transfer leg (supports 1 or 2 transfers)
     legs.forEach((leg, i) => {
       if (i > 0 && leg.isTransfer && leg.stop && isValidLatLon(leg.stop.lat, leg.stop.lon)){
         const ts = leg.stop;
@@ -1821,16 +2108,16 @@ svg.map-icon {
         _attachBusStopPopup(mt, ts, leg.deps || [], leg.nextDep || null);
       }
     });
-    // Add 🚌 B marker for nearest stop to B
+    // 🚌 B marker for nearest stop to B
     if (stop2){
       const m = new atlas.HtmlMarker({
         position: [stop2.lon, stop2.lat],
         htmlContent: '<div style="background:#000;color:#00B0F8;border:2px solid #00B0F8;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:700;font-family:sans-serif;white-space:nowrap;cursor:pointer;">🚌 B</div>'
       });
       map.markers.add(m); busMarkers.push(m);
-      // For marker popup: use last leg's deps if it is not a transfer (independent fallback leg), else fetch stop2 deps
+      // For marker popup: use last leg's deps if it is not a transfer (independent fallback leg)
       const lastLeg = legs.length >= 2 ? legs[legs.length - 1] : null;
-      const lFinal = (lastLeg && !lastLeg.isTransfer) ? lastLeg : null;
+      const lFinal = (lastLeg && !lastLeg.isTransfer && !lastLeg._isWalk) ? lastLeg : null;
       if (lFinal && lFinal.deps){
         _attachBusStopPopup(m, stop2, lFinal.deps, lFinal.nextDep || null);
       } else {
@@ -1840,11 +2127,11 @@ svg.map-icon {
       }
     }
 
-    // Draw route line using GTFS shapes for exact geometry (forward direction only).
-    // For each leg, look up the trip's shape, find nearest shape points to boarding
-    // and alighting stops, then slice forward (ascending sequence). Falls back to
-    // a polyline through the ordered bus stops from route_stops.json, or a straight
-    // line between key stops as a last resort if no stop sequence is available.
+    // ── Draw route line ──────────────────────────────────────────────────────────────
+    // Uses GTFS shapes for exact geometry (bus segments), or ordered stop polylines,
+    // or straight lines as a last resort.
+    // For walk+bus: the walk segment is a straight line from the user's position to
+    // the boarding bus stop; bus segments follow from there.
     await loadGtfsStops();
     _ensureGtfsStopMap();
     await loadGtfsShapes();
@@ -1856,8 +2143,6 @@ svg.map-icon {
       const lon = s.lon !== undefined ? s.lon : s.lng;
       return isValidLatLon(lat, lon) ? [lon, lat] : null;
     };
-    // Return the index of the shape point nearest to [lon, lat].
-    // Apply a latitude cosine correction to longitude so distance is isotropic in degrees.
     const nearestShapeIdx = (shape, lon, lat) => {
       const cosLat = Math.cos(lat * Math.PI / 180);
       let best = -1, bestDist = Infinity;
@@ -1871,6 +2156,19 @@ svg.map-icon {
     const stopLineCoords = [];
     for (let i = 0; i < legs.length; i++) {
       const leg = legs[i];
+      // Walk leg: draw the real pedestrian route when available (fetched from Azure Maps
+      // during the extended search), otherwise fall back to a straight line.
+      if (leg._isWalk) {
+        if (leg._walkCoords && leg._walkCoords.length >= 2) {
+          for (const pt of leg._walkCoords) {
+            const last = stopLineCoords[stopLineCoords.length - 1];
+            if (!last || last[0] !== pt[0] || last[1] !== pt[1]) stopLineCoords.push(pt);
+          }
+        } else if (walkFrom && leg.stop && isValidLatLon(leg.stop.lat, leg.stop.lon)) {
+          stopLineCoords.push(walkFrom, [leg.stop.lon, leg.stop.lat]);
+        }
+        continue;
+      }
       if (!leg.stop) continue;
       const nextStop = i + 1 < legs.length ? legs[i + 1].stop : (hasB ? stop2 : null);
       let segAdded = false;
@@ -1883,18 +2181,14 @@ svg.map-icon {
         if (shape && shape.length >= 2 && startCoord && endCoord) {
           const idxA = nearestShapeIdx(shape, startCoord[0], startCoord[1]);
           const idxB = nearestShapeIdx(shape, endCoord[0], endCoord[1]);
-          // Accept both forward (idxA < idxB) and reverse (idxA > idxB) direction shapes.
           if (idxA >= 0 && idxB >= 0 && idxA !== idxB) {
-            // Slice from boarding stop to alighting stop; reverse if shape is stored backwards.
             const raw = idxA < idxB ? shape.slice(idxA, idxB + 1) : shape.slice(idxB, idxA + 1).reverse();
-            // Decimate to at most 80 points to keep the drawn line clean and fast.
             const step = raw.length > 80 ? Math.ceil(raw.length / 80) : 1;
             for (let pi = 0; pi < raw.length; pi += step) {
               const pt = raw[pi];
               const last = stopLineCoords[stopLineCoords.length - 1];
               if (!last || last[0] !== pt[0] || last[1] !== pt[1]) stopLineCoords.push(pt);
             }
-            // Always include the final point of the segment
             const lastPt = raw[raw.length - 1];
             const lastAdded = stopLineCoords[stopLineCoords.length - 1];
             if (!lastAdded || lastAdded[0] !== lastPt[0] || lastAdded[1] !== lastPt[1]) stopLineCoords.push(lastPt);
@@ -1903,8 +2197,6 @@ svg.map-icon {
         }
       }
       if (!segAdded) {
-        // Fallback: draw through the ordered stop sequence from route_stops.json so
-        // the dashed line follows the actual bus route instead of a straight line.
         const routeId = leg.internalRouteId || leg.tripId;
         const stopsOnRoute = routeId ? (routeStopsData[routeId] || []) : [];
         if (stopsOnRoute.length >= 2 && nextStop) {
@@ -1927,7 +2219,6 @@ svg.map-icon {
           }
         }
         if (!segAdded) {
-          // Last resort: add just this stop's coordinate (straight line to next will be implicit)
           const c = stopCoordFn(leg.stop.stop_id) || (isValidLatLon(leg.stop.lat, leg.stop.lon) ? [leg.stop.lon, leg.stop.lat] : null);
           if (c) {
             const last = stopLineCoords[stopLineCoords.length - 1];
