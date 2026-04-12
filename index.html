@@ -287,10 +287,17 @@ svg.map-icon {
                 <circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>
               </svg>
             </button>
-            <button class="secondary" id="resetBtn" title="Nulstil felter">Nulstil</button>
-            <button class="secondary" id="autotrackBtn" title="Start/stop auto-sporing">Auto-spor: OFF</button>
+            <button class="oex-btn" id="resetBtn" title="Nulstil felter" aria-label="Nulstil felter">
+              <svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+            <button class="oex-btn" id="autotrackBtn" title="Start/stop auto-sporing" aria-label="Auto-sporing OFF">
+              <svg class="map-icon" id="autotrack-icon-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              <svg class="map-icon" id="autotrack-icon-on" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            </button>
             <span id="oex-gps-status" class="oex-chip oex-chip-off" aria-live="polite" title="GPS status"><span class="dot" aria-hidden="true"></span>PAUSE</span>
-            <button class="secondary" id="shareBtn" title="Del visning">Del</button>
+            <button class="oex-btn" id="shareBtn" title="Del visning" aria-label="Del visning">
+              <svg class="map-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -526,8 +533,9 @@ svg.map-icon {
       const atBtn = document.getElementById('autotrackBtn');
       if(atBtn){
         atBtn.addEventListener('click', ()=>{
-          if(oexWatchId===null){ oexStartAutoTrack({highAccuracy:true}); atBtn.textContent = 'Auto-spor: ON'; atBtn.classList.remove('secondary'); setStatusChip('LIVE • GPS', true); }
-          else { oexStopAutoTrack(); atBtn.textContent = 'Auto-spor: OFF'; atBtn.classList.add('secondary'); setStatusChip('PAUSE', false); }
+          const iconOff = document.getElementById('autotrack-icon-off'); const iconOn = document.getElementById('autotrack-icon-on');
+          if(oexWatchId===null){ oexStartAutoTrack({highAccuracy:true}); if(iconOff)iconOff.style.display='none'; if(iconOn)iconOn.style.display=''; atBtn.setAttribute('aria-label','Auto-sporing ON'); atBtn.title='Stop auto-sporing'; setStatusChip('LIVE • GPS', true); }
+          else { oexStopAutoTrack(); if(iconOff)iconOff.style.display=''; if(iconOn)iconOn.style.display='none'; atBtn.setAttribute('aria-label','Auto-sporing OFF'); atBtn.title='Start/stop auto-sporing'; setStatusChip('PAUSE', false); }
         });
       }
 
