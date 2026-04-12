@@ -1384,8 +1384,10 @@ svg.map-icon {
               const ents = da[String(stopId)];
               if (ents && ents.length) {
                 for (const ent of ents) {
-                  // Primary: exact trip match
-                  if (ent.route_id === prevTripId) {
+                  // Primary: exact trip match — prefer trip_id when present (new data format),
+                  // fall back to route_id comparison for old data where route_id was the trip_id.
+                  const entMatchId = ent.trip_id || ent.route_id;
+                  if (entMatchId === prevTripId) {
                     arrivalHHMM = (ent.departure || ent.arrival || '').substring(0, 5);
                     break;
                   }
@@ -1578,7 +1580,7 @@ svg.map-icon {
         const routesAtStop2 = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
         await loadGtfsStops();
         _ensureGtfsStopMap();
-        const leg1TripId = e1 ? e1.route_id : null;
+        const leg1TripId = e1 ? (e1.trip_id || e1.route_id) : null;
         const leg1HHMM = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
         let bestConn = null, bestTransferRouteId = null, bestTransferStop = null;
         for (const stopId of stopsOnRoute1){
@@ -1653,7 +1655,7 @@ svg.map-icon {
               dist: 0
             };
 
-            const connLN = await findConnectingDep(sid, transferRouteId, e1 ? e1.route_id : null, e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '', 48);
+            const connLN = await findConnectingDep(sid, transferRouteId, e1 ? (e1.trip_id || e1.route_id) : null, e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '', 48);
             return [leg1, makeLeg2Transfer(transferStop, transferRouteId, connLN)];
           }
         }
@@ -1666,7 +1668,7 @@ svg.map-icon {
         await loadGtfsStops();
         _ensureGtfsStopMap();
         const routesAtStop2bfs = _gtfsStopToRoutes ? (_gtfsStopToRoutes.get(stop2Id) || new Set()) : new Set();
-        const leg1TripId_bfs = e1 ? e1.route_id : null;
+        const leg1TripId_bfs = e1 ? (e1.trip_id || e1.route_id) : null;
         const leg1HHMM_bfs   = e1 ? (e1.departure || e1.arrival || '').substring(0, 5) : '';
         const MAX_HOPS = 4;    // allow up to 4 transfers (5 legs total)
         const MAX_STOPS_BFS = 40; // max stops examined per route per BFS level
@@ -1715,7 +1717,7 @@ svg.map-icon {
             };
             const conn = await findConnectingDep(hop.transferStopId, hop.routeId, prevTripId, prevHHMM, 48);
             transferLegs.push(makeLeg2Transfer(transferStop, hop.routeId, conn));
-            prevTripId = conn.entry ? conn.entry.route_id : null;
+            prevTripId = conn.entry ? (conn.entry.trip_id || conn.entry.route_id) : null;
             prevHHMM   = conn.depTime || conn.minTime;
           }
           if (pathOk && transferLegs.length === bfsFoundPath.length) {

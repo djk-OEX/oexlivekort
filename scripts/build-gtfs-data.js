@@ -306,6 +306,7 @@ async function main() {
         if (!departureSlots[slotKey][stopId]) departureSlots[slotKey][stopId] = [];
         const entry = {
           route_id:   trip.routeId,
+          trip_id:    tripId,
           short_name: lineName,
           arrival:    arrTime,
           departure:  depTime
