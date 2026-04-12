@@ -1370,10 +1370,12 @@ svg.map-icon {
         const allSlotKeys = _getDaySlotKeys();
         let arrivalHHMM = '';
         if (prevTripId && prevHHMM && prevHHMM.length >= 5) {
+          const prevRouteResolved = (_gtfsTripToRoute && _gtfsTripToRoute[prevTripId]) || prevTripId;
           const scanSlotKey = prevHHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(prevHHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
           const scanSlotIdx = allSlotKeys.indexOf(scanSlotKey);
           const scanFrom = scanSlotIdx >= 0 ? scanSlotIdx : 0;
           const scanOrdered = [...allSlotKeys.slice(scanFrom), ...allSlotKeys.slice(0, scanFrom)];
+          let routeFallbackHHMM = '';
           for (let si = 0; si < Math.min(24, scanOrdered.length) && !arrivalHHMM; si++) {
             try {
               const ra = await fetch('data/departures_5min/' + scanOrdered[si] + '.json.gz');
@@ -1382,14 +1384,25 @@ svg.map-icon {
               const ents = da[String(stopId)];
               if (ents && ents.length) {
                 for (const ent of ents) {
+                  // Primary: exact trip match
                   if (ent.route_id === prevTripId) {
                     arrivalHHMM = (ent.departure || ent.arrival || '').substring(0, 5);
                     break;
+                  }
+                  // Secondary: same route, any trip, after prevHHMM (collect earliest)
+                  if (!routeFallbackHHMM) {
+                    const entRoute = (_gtfsTripToRoute && _gtfsTripToRoute[ent.route_id]) || ent.route_id;
+                    if (entRoute === prevRouteResolved) {
+                      const t = (ent.departure || ent.arrival || '').substring(0, 5);
+                      if (t.length >= 5 && t >= prevHHMM) routeFallbackHHMM = t;
+                    }
                   }
                 }
               }
             } catch(_) {}
           }
+          // Use route-level fallback only if exact trip was not found
+          if (!arrivalHHMM && routeFallbackHHMM) arrivalHHMM = routeFallbackHHMM;
         }
         const minTime = arrivalHHMM || (prevHHMM || '');
         // Connecting bus must depart after arrival slot + 2 slots (skip the arrival slot and
