@@ -1370,10 +1370,12 @@ svg.map-icon {
         const allSlotKeys = _getDaySlotKeys();
         let arrivalHHMM = '';
         if (prevTripId && prevHHMM && prevHHMM.length >= 5) {
+          const prevRouteResolved = (_gtfsTripToRoute && _gtfsTripToRoute[prevTripId]) || prevTripId;
           const scanSlotKey = prevHHMM.substring(0, 2) + '_' + String(Math.floor(parseInt(prevHHMM.substring(3, 5)) / 5) * 5).padStart(2, '0');
           const scanSlotIdx = allSlotKeys.indexOf(scanSlotKey);
           const scanFrom = scanSlotIdx >= 0 ? scanSlotIdx : 0;
           const scanOrdered = [...allSlotKeys.slice(scanFrom), ...allSlotKeys.slice(0, scanFrom)];
+          let routeFallbackHHMM = '';
           for (let si = 0; si < Math.min(24, scanOrdered.length) && !arrivalHHMM; si++) {
             try {
               const ra = await fetch('data/departures_5min/' + scanOrdered[si] + '.json.gz');
@@ -1382,34 +1384,41 @@ svg.map-icon {
               const ents = da[String(stopId)];
               if (ents && ents.length) {
                 for (const ent of ents) {
+                  // Primary: exact trip match
                   if (ent.route_id === prevTripId) {
                     arrivalHHMM = (ent.departure || ent.arrival || '').substring(0, 5);
                     break;
+                  }
+                  // Secondary: same route, any trip, after prevHHMM (collect earliest)
+                  if (!routeFallbackHHMM) {
+                    const entRoute = (_gtfsTripToRoute && _gtfsTripToRoute[ent.route_id]) || ent.route_id;
+                    if (entRoute === prevRouteResolved) {
+                      const t = (ent.departure || ent.arrival || '').substring(0, 5);
+                      if (t.length >= 5 && t >= prevHHMM) routeFallbackHHMM = t;
+                    }
                   }
                 }
               }
             } catch(_) {}
           }
+          // Use route-level fallback only if exact trip was not found
+          if (!arrivalHHMM && routeFallbackHHMM) arrivalHHMM = routeFallbackHHMM;
         }
         const minTime = arrivalHHMM || (prevHHMM || '');
-        // Connecting bus must depart at least 10 min after leg1 arrives at the transfer stop
+        // Connecting bus must depart after arrival slot + 2 slots (skip the arrival slot and
+        // the immediately following slot). Floor the arrival time to its 5-min slot boundary
+        // first so that e.g. arrival at 21:16 → slot 21:15 + 10 min → search from 21:25,
+        // not 21:16 + 10 = 21:26 → ceil-rounded to 21:30 (which would skip an extra slot).
         let transferMinTime = minTime;
+        let slotStart = 0;
         if (minTime.length >= 5) {
           const tH0 = parseInt(minTime.substring(0, 2), 10);
           const tM0 = parseInt(minTime.substring(3, 5), 10);
-          const plusMins = tH0 * 60 + tM0 + 10;
-          const pH = Math.floor(plusMins / 60);
-          const pM = plusMins % 60;
+          const slotMins = Math.floor((tH0 * 60 + tM0) / 5) * 5 + 10;
+          const pH = Math.floor(slotMins / 60);
+          const pM = slotMins % 60;
           transferMinTime = String(pH).padStart(2, '0') + ':' + String(pM).padStart(2, '0');
-        }
-        let slotStart = 0;
-        if (transferMinTime.length >= 5) {
-          const tH = parseInt(transferMinTime.substring(0, 2));
-          const tM = parseInt(transferMinTime.substring(3, 5));
-          const nextSlotMins = Math.ceil((tH * 60 + tM) / 5) * 5;
-          const nextH = Math.floor(nextSlotMins / 60);
-          const nextM = nextSlotMins % 60;
-          const nextSlotKey = String(nextH).padStart(2, '0') + '_' + String(nextM).padStart(2, '0');
+          const nextSlotKey = String(pH).padStart(2, '0') + '_' + String(pM).padStart(2, '0');
           const ki = allSlotKeys.indexOf(nextSlotKey);
           if (ki >= 0) slotStart = Math.min(ki, allSlotKeys.length - 1);
         }
